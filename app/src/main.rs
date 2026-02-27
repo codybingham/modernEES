@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
+use std::fs;
 
 use modern_ees_core::param_table::{
     run_param_table as core_run_param_table, ColumnSpec, ParamTableSpec, Sweep,
@@ -9,7 +10,10 @@ use modern_ees_core::{
     analyze_units, parse_program, solve_program_with_options as core_solve_program_with_options,
     SolveOptions,
 };
+use rfd::{FileDialog, MessageButtons, MessageDialog, MessageLevel};
 use serde::{Deserialize, Serialize};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Deserialize)]
 struct SolveOptionsInput {
@@ -90,6 +94,17 @@ struct TableResponse {
     diagnostics: Vec<UiDiagnostic>,
     rows: Vec<HashMap<String, f64>>,
     message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct FileLoadResponse {
+    path: String,
+    contents: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FileSaveResponse {
+    path: String,
 }
 
 #[tauri::command]
@@ -263,6 +278,185 @@ fn run_param_table(
     }
 }
 
+#[tauri::command]
+fn open_equations_file() -> Result<FileLoadResponse, String> {
+    let Some(path) = FileDialog::new()
+        .add_filter("Text", &["txt"])
+        .set_title("Open Equations File")
+        .pick_file()
+    else {
+        return Err("Open canceled".to_string());
+    };
+
+    let contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    Ok(FileLoadResponse {
+        path: path.display().to_string(),
+        contents,
+    })
+}
+
+#[tauri::command]
+fn save_equations_file(
+    equations_text: String,
+    current_path: Option<String>,
+    save_as: bool,
+) -> Result<FileSaveResponse, String> {
+    let target_path = if !save_as {
+        current_path
+            .as_deref()
+            .and_then(|path| (!path.trim().is_empty()).then_some(path.to_string()))
+    } else {
+        None
+    }
+    .map(std::path::PathBuf::from)
+    .or_else(|| {
+        FileDialog::new()
+            .add_filter("Text", &["txt"])
+            .set_title("Save Equations File")
+            .set_file_name("equations.txt")
+            .save_file()
+    });
+
+    let Some(path) = target_path else {
+        return Err("Save canceled".to_string());
+    };
+
+    fs::write(&path, equations_text).map_err(|err| err.to_string())?;
+    Ok(FileSaveResponse {
+        path: path.display().to_string(),
+    })
+}
+
+fn emit_menu_event(app: &AppHandle, event: &str) {
+    let _ = app.emit(event, ());
+}
+
+fn handle_menu_event(app: &AppHandle, id: &str) {
+    match id {
+        "file_new" => emit_menu_event(app, "menu://file-new"),
+        "file_open" => emit_menu_event(app, "menu://file-open"),
+        "file_save" => emit_menu_event(app, "menu://file-save"),
+        "file_save_as" => emit_menu_event(app, "menu://file-save-as"),
+        "file_quit" => app.exit(0),
+        "calc_solve" => emit_menu_event(app, "menu://calculate-solve"),
+        "calc_analyze" => emit_menu_event(app, "menu://calculate-analyze"),
+        "tables_run" => emit_menu_event(app, "menu://tables-run"),
+        "help_about" => {
+            MessageDialog::new()
+                .set_level(MessageLevel::Info)
+                .set_title("About modernEES")
+                .set_description("modernEES\nA modern desktop shell for equation solving.")
+                .set_buttons(MessageButtons::Ok)
+                .show();
+        }
+        _ => {}
+    }
+}
+
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(app, "file_new", "New", true, Some("Ctrl+N"))?,
+            &MenuItem::with_id(app, "file_open", "Open…", true, Some("Ctrl+O"))?,
+            &MenuItem::with_id(app, "file_save", "Save", true, Some("Ctrl+S"))?,
+            &MenuItem::with_id(app, "file_save_as", "Save As…", true, Some("Ctrl+Shift+S"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "file_quit", "Quit", true, Some("Ctrl+Q"))?,
+        ],
+    )?;
+
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+
+    let calculate_menu = Submenu::with_items(
+        app,
+        "Calculate",
+        true,
+        &[
+            &MenuItem::with_id(app, "calc_solve", "Solve", true, Some("Ctrl+Enter"))?,
+            &MenuItem::with_id(app, "calc_analyze", "Analyze", true, Some("F5"))?,
+        ],
+    )?;
+
+    let tables_menu = Submenu::with_items(
+        app,
+        "Tables",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "tables_run",
+            "Run Param Table",
+            true,
+            Some("Ctrl+R"),
+        )?],
+    )?;
+
+    let plots_menu = Submenu::with_items(
+        app,
+        "Plots",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "plots_placeholder",
+            "Plot Window",
+            false,
+            None::<&str>,
+        )?],
+    )?;
+    let options_menu = Submenu::with_items(
+        app,
+        "Options",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "options_placeholder",
+            "Preferences",
+            false,
+            None::<&str>,
+        )?],
+    )?;
+    let help_menu = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "help_about",
+            "About",
+            true,
+            None::<&str>,
+        )?],
+    )?;
+
+    Menu::with_items(
+        app,
+        &[
+            &file_menu,
+            &edit_menu,
+            &calculate_menu,
+            &tables_menu,
+            &plots_menu,
+            &options_menu,
+            &help_menu,
+        ],
+    )
+}
+
 fn discover_identifiers(program: &Program) -> Vec<String> {
     let mut names = BTreeSet::new();
     for statement in &program.statements {
@@ -313,10 +507,20 @@ fn convert_diag(
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            let menu = build_menu(&app.handle())?;
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            handle_menu_event(app, event.id().as_ref());
+        })
         .invoke_handler(tauri::generate_handler![
             parse_and_analyze,
             solve_program,
-            run_param_table
+            run_param_table,
+            open_equations_file,
+            save_equations_file
         ])
         .run(tauri::generate_context!())
         .expect("tauri app should run");
