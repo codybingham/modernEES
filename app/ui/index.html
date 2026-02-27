@@ -63,8 +63,10 @@ x - y = 2</textarea>
 
     <script>
       const invoke = window.__TAURI__?.core?.invoke;
+      const listen = window.__TAURI__?.event?.listen;
       const el = (id) => document.getElementById(id);
       let latestRows = [];
+      let currentFilePath = null;
 
       function showDiagnostics(lines) {
         el('diagnostics').textContent = lines.length ? lines.join('\n') : 'No diagnostics';
@@ -75,6 +77,14 @@ x - y = 2</textarea>
         el('variables').textContent = entries.length
           ? entries.map(([k, v]) => `${k} = ${v}`).join('\n')
           : 'No variables';
+      }
+
+      function clearWorkspace() {
+        el('equations').value = '';
+        showDiagnostics([]);
+        showVariables({});
+        renderRows([]);
+        currentFilePath = null;
       }
 
       function drawPlot() {
@@ -199,6 +209,47 @@ x - y = 2</textarea>
 
       el('xCol').onchange = drawPlot;
       el('yCol').onchange = drawPlot;
+
+      async function openFromDisk() {
+        try {
+          const file = await safeInvoke('open_equations_file');
+          el('equations').value = file.contents || '';
+          currentFilePath = file.path || null;
+          showDiagnostics([`Opened: ${currentFilePath}`]);
+          showVariables({});
+          renderRows([]);
+        } catch (err) {
+          if (!String(err).includes('canceled')) {
+            showDiagnostics([`Open failed: ${err}`]);
+          }
+        }
+      }
+
+      async function saveToDisk(saveAs) {
+        try {
+          const file = await safeInvoke('save_equations_file', {
+            equationsText: el('equations').value,
+            currentPath: currentFilePath,
+            saveAs,
+          });
+          currentFilePath = file.path || currentFilePath;
+          showDiagnostics([`Saved: ${currentFilePath}`]);
+        } catch (err) {
+          if (!String(err).includes('canceled')) {
+            showDiagnostics([`Save failed: ${err}`]);
+          }
+        }
+      }
+
+      if (listen) {
+        listen('menu://file-new', clearWorkspace);
+        listen('menu://file-open', () => { void openFromDisk(); });
+        listen('menu://file-save', () => { void saveToDisk(false); });
+        listen('menu://file-save-as', () => { void saveToDisk(true); });
+        listen('menu://calculate-solve', () => { void el('solveBtn').onclick(); });
+        listen('menu://calculate-analyze', () => { void el('analyzeBtn').onclick(); });
+        listen('menu://tables-run', () => { void el('runTableBtn').onclick(); });
+      }
     </script>
   </body>
 </html>
