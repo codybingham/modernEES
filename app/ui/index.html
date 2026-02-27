@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>modernEES</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #f3f4f6; }
+      .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+      .card { background: #fff; border-radius: 8px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+      textarea, input, select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px; }
+      button { margin-top: 8px; padding: 8px 10px; cursor: pointer; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #equations { min-height: 220px; }
+      #diagnostics { min-height: 120px; }
+      #resultsGrid { max-height: 220px; overflow: auto; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ddd; padding: 4px; font-size: 12px; }
+      #plotCanvas { width: 100%; height: 260px; border: 1px solid #ddd; }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <div class="card">
+        <h3>Equations Editor</h3>
+        <textarea id="equations" class="mono">x + y = 10
+x - y = 2</textarea>
+        <button id="analyzeBtn">Analyze</button>
+        <button id="solveBtn">Solve</button>
+      </div>
+
+      <div class="card">
+        <h3>Diagnostics</h3>
+        <div id="diagnostics" class="mono"></div>
+        <h4>Variables / Results</h4>
+        <div id="variables" class="mono"></div>
+      </div>
+
+      <div class="card">
+        <h3>Param Table</h3>
+        <label>Sweeps JSON</label>
+        <textarea id="sweeps" class="mono">[
+  {"var":"x","values":[1,2,3,4]}
+]</textarea>
+        <label>Columns JSON</label>
+        <textarea id="columns" class="mono">[
+  {"name":"x","expression":"x"},
+  {"name":"y","expression":"y"}
+]</textarea>
+        <button id="runTableBtn">Run Table</button>
+        <div id="resultsGrid"></div>
+      </div>
+
+      <div class="card">
+        <h3>Plot</h3>
+        <label>X Column</label>
+        <select id="xCol"></select>
+        <label>Y Column</label>
+        <select id="yCol"></select>
+        <canvas id="plotCanvas" width="600" height="260"></canvas>
+      </div>
+    </div>
+
+    <script>
+      const invoke = window.__TAURI__?.core?.invoke;
+      const el = (id) => document.getElementById(id);
+      let latestRows = [];
+
+      function showDiagnostics(lines) {
+        el('diagnostics').textContent = lines.length ? lines.join('\n') : 'No diagnostics';
+      }
+
+      function showVariables(vars) {
+        const entries = Object.entries(vars || {}).sort((a, b) => a[0].localeCompare(b[0]));
+        el('variables').textContent = entries.length
+          ? entries.map(([k, v]) => `${k} = ${v}`).join('\n')
+          : 'No variables';
+      }
+
+      function drawPlot() {
+        const xKey = el('xCol').value;
+        const yKey = el('yCol').value;
+        const c = el('plotCanvas');
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, c.width, c.height);
+        if (!xKey || !yKey || !latestRows.length) return;
+
+        const points = latestRows
+          .map((r) => ({ x: Number(r[xKey]), y: Number(r[yKey]) }))
+          .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (!points.length) return;
+
+        const minX = Math.min(...points.map((p) => p.x));
+        const maxX = Math.max(...points.map((p) => p.x));
+        const minY = Math.min(...points.map((p) => p.y));
+        const maxY = Math.max(...points.map((p) => p.y));
+        const pad = 24;
+        const sx = (x) => pad + ((x - minX) / (maxX - minX || 1)) * (c.width - 2 * pad);
+        const sy = (y) => c.height - pad - ((y - minY) / (maxY - minY || 1)) * (c.height - 2 * pad);
+
+        ctx.strokeStyle = '#999';
+        ctx.strokeRect(pad, pad, c.width - 2 * pad, c.height - 2 * pad);
+        ctx.fillStyle = '#111';
+        ctx.fillText(`${xKey}`, c.width / 2, c.height - 4);
+        ctx.save();
+        ctx.translate(6, c.height / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(`${yKey}`, 0, 0);
+        ctx.restore();
+
+        ctx.strokeStyle = '#2563eb';
+        ctx.beginPath();
+        points.forEach((p, i) => {
+          const x = sx(p.x), y = sy(p.y);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        ctx.fillStyle = '#dc2626';
+        points.forEach((p) => {
+          ctx.beginPath();
+          ctx.arc(sx(p.x), sy(p.y), 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      function renderRows(rows) {
+        latestRows = rows || [];
+        if (!latestRows.length) {
+          el('resultsGrid').textContent = 'No rows';
+          return;
+        }
+        const cols = [...new Set(latestRows.flatMap((r) => Object.keys(r)))];
+        el('xCol').innerHTML = cols.map((c) => `<option>${c}</option>`).join('');
+        el('yCol').innerHTML = cols.map((c) => `<option>${c}</option>`).join('');
+        if (cols.length > 1) el('yCol').value = cols[1];
+
+        const head = `<tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr>`;
+        const body = latestRows
+          .map((r) => `<tr>${cols.map((c) => `<td>${r[c] ?? ''}</td>`).join('')}</tr>`)
+          .join('');
+        el('resultsGrid').innerHTML = `<table>${head}${body}</table>`;
+        drawPlot();
+      }
+
+      async function safeInvoke(cmd, payload) {
+        if (!invoke) throw new Error('Tauri invoke API not available');
+        return invoke(cmd, payload);
+      }
+
+      el('analyzeBtn').onclick = async () => {
+        try {
+          const data = await safeInvoke('parse_and_analyze', { equationsText: el('equations').value });
+          const lines = data.diagnostics.map((d) => `[${d.source}] L${d.span.line}: ${d.message}`);
+          if (data.identifiers?.length) lines.push(`Identifiers: ${data.identifiers.join(', ')}`);
+          showDiagnostics(lines);
+        } catch (err) {
+          showDiagnostics([`Analyze failed: ${err}`]);
+        }
+      };
+
+      el('solveBtn').onclick = async () => {
+        try {
+          const data = await safeInvoke('solve_program', { equationsText: el('equations').value, options: null });
+          const lines = [];
+          if (data.message) lines.push(data.message);
+          lines.push(`Status: ${data.status}`);
+          if (data.iterations != null) lines.push(`Iterations: ${data.iterations}`);
+          if (data.final_norm != null) lines.push(`Final norm: ${data.final_norm}`);
+          lines.push(...(data.diagnostics || []).map((d) => `[${d.source}] L${d.span.line}: ${d.message}`));
+          showDiagnostics(lines);
+          showVariables(data.variables || {});
+        } catch (err) {
+          showDiagnostics([`Solve failed: ${err}`]);
+        }
+      };
+
+      el('runTableBtn').onclick = async () => {
+        try {
+          const sweeps = JSON.parse(el('sweeps').value);
+          const columns = JSON.parse(el('columns').value);
+          const data = await safeInvoke('run_param_table', {
+            equationsText: el('equations').value,
+            tableSpec: { sweeps, columns },
+            options: null,
+          });
+          const lines = [
+            `Table status: ${data.status}`,
+            ...(data.message ? [data.message] : []),
+            ...(data.diagnostics || []).map((d) => `[${d.source}] L${d.span.line}: ${d.message}`),
+          ];
+          showDiagnostics(lines);
+          renderRows(data.rows || []);
+        } catch (err) {
+          showDiagnostics([`Run table failed: ${err}`]);
+          renderRows([]);
+        }
+      };
+
+      el('xCol').onchange = drawPlot;
+      el('yCol').onchange = drawPlot;
+    </script>
+  </body>
+</html>
