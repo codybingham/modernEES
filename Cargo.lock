@@ -21,6 +21,10 @@ version = "0.1.0"
 [[package]]
 name = "modern_ees_core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "modern_ees_props_coolprop"

@@ -2,11 +2,14 @@ use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+use serde::{Deserialize, Serialize};
+
 use crate::parser::ast::{BinaryOp, Expr, ExprKind, Program, StatementKind, UnaryOp};
 use crate::parser::diagnostic::Span;
+use crate::parser::parse_expression;
 use crate::props::{h, p_from_th, rho, s, t_from_ph, PropsError, PropsProvider};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConvergenceStatus {
     Converged,
     MaxIterations,
@@ -93,8 +96,20 @@ pub fn solve_program_with_options(
     provider: &dyn PropsProvider,
     options: &SolveOptions,
 ) -> Result<SolveResult, SolveError> {
+    solve_program_with_options_and_fixed(program, provider, options, &HashMap::new())
+}
+
+pub fn solve_program_with_options_and_fixed(
+    program: &Program,
+    provider: &dyn PropsProvider,
+    options: &SolveOptions,
+    fixed: &HashMap<String, f64>,
+) -> Result<SolveResult, SolveError> {
     let equations = extract_equations(program);
-    let known = extract_known_constants(program)?;
+    let mut known = extract_known_constants(program)?;
+    for (name, value) in fixed {
+        known.insert(name.clone(), *value);
+    }
     let unknowns = discover_unknowns(&equations, &known);
 
     let mut env = known.clone();
@@ -244,6 +259,22 @@ pub fn solve_program_with_options(
             ConvergenceStatus::MaxIterations,
         ),
     })
+}
+
+pub fn evaluate_expression_string(
+    source: &str,
+    env: &HashMap<String, f64>,
+    provider: &dyn PropsProvider,
+) -> Result<f64, String> {
+    let expr = parse_expression(source).map_err(|diagnostics| {
+        diagnostics
+            .into_iter()
+            .map(|diag| diag.message)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+
+    eval_expr(&expr, env, &[], provider)
 }
 
 fn build_error(
