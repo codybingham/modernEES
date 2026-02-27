@@ -4,12 +4,13 @@ use std::fs;
 use modern_ees_core::param_table::{
     run_param_table as core_run_param_table, ColumnSpec, ParamTableSpec, Sweep,
 };
-use modern_ees_core::parser::ast::{Expr, ExprKind, Program, StatementKind};
-use modern_ees_core::props::MockPropsProvider;
+use modern_ees_core::parser::ast::{CallArg, Expr, ExprKind, Program, StatementKind};
+use modern_ees_core::props::{Prop, PropsProvider, PropsQuery, StateVar};
 use modern_ees_core::{
     analyze_units, parse_program, solve_program_with_options as core_solve_program_with_options,
     SolveOptions,
 };
+use modern_ees_props_coolprop::CoolPropProvider;
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageLevel};
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -69,6 +70,12 @@ struct SolveResponse {
     final_norm: Option<f64>,
     message: Option<String>,
     worst_residual: Option<UiResidual>,
+}
+
+#[derive(Debug, Serialize)]
+struct PropsStatusResponse {
+    available: bool,
+    message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,7 +147,20 @@ fn parse_and_analyze(equations_text: String) -> AnalyzeResponse {
 
 #[tauri::command]
 fn solve_program(equations_text: String, options: Option<SolveOptionsInput>) -> SolveResponse {
-    let provider = MockPropsProvider::new().with_fallback_formula(true);
+    let provider = match build_provider() {
+        Ok(provider) => provider,
+        Err(message) => {
+            return SolveResponse {
+                status: "props_unavailable".to_string(),
+                diagnostics: Vec::new(),
+                variables: HashMap::new(),
+                iterations: None,
+                final_norm: None,
+                message: Some(message),
+                worst_residual: None,
+            }
+        }
+    };
 
     let program = match parse_program(&equations_text) {
         Ok(program) => program,
@@ -218,7 +238,20 @@ fn run_param_table(
     table_spec: TableSpecInput,
     options: Option<SolveOptionsInput>,
 ) -> TableResponse {
-    let provider = MockPropsProvider::new().with_fallback_formula(true);
+    let provider = match build_provider() {
+        Ok(provider) => provider,
+        Err(message) => {
+            return SolveResponse {
+                status: "props_unavailable".to_string(),
+                diagnostics: Vec::new(),
+                variables: HashMap::new(),
+                iterations: None,
+                final_norm: None,
+                message: Some(message),
+                worst_residual: None,
+            }
+        }
+    };
 
     let program = match parse_program(&equations_text) {
         Ok(program) => program,
@@ -298,6 +331,20 @@ fn run_param_table(
         diagnostics: Vec::new(),
         rows,
         message: None,
+    }
+}
+
+#[tauri::command]
+fn props_status() -> PropsStatusResponse {
+    match build_provider().and_then(|provider| props_self_test(&provider)) {
+        Ok(()) => PropsStatusResponse {
+            available: true,
+            message: None,
+        },
+        Err(message) => PropsStatusResponse {
+            available: false,
+            message: Some(message),
+        },
     }
 }
 
@@ -565,11 +612,31 @@ fn collect_identifiers(expr: &Expr, names: &mut BTreeSet<String>) {
         }
         ExprKind::Call { args, .. } => {
             for arg in args {
-                collect_identifiers(arg, names);
+                match arg {
+                    CallArg::Positional(expr) => collect_identifiers(expr, names),
+                    CallArg::Keyword { value, .. } => collect_identifiers(value, names),
+                }
             }
         }
         ExprKind::Number(_) | ExprKind::QuantityLiteral { .. } | ExprKind::StringLiteral(_) => {}
     }
+}
+
+fn build_provider() -> Result<CoolPropProvider, String> {
+    CoolPropProvider::new().map_err(|err| format!("CoolProp provider unavailable: {err}"))
+}
+
+fn props_self_test(provider: &dyn PropsProvider) -> Result<(), String> {
+    let query = PropsQuery::new(
+        "Water",
+        Prop::H,
+        (StateVar::T, 300.0),
+        (StateVar::P, 101_325.0),
+    );
+    provider
+        .query(&query)
+        .map(|_| ())
+        .map_err(|err| format!("Props self-test failed: {err}"))
 }
 
 fn convert_diag(
@@ -594,6 +661,9 @@ fn main() {
         .setup(|app| {
             let menu = build_menu(&app.handle())?;
             app.set_menu(menu)?;
+            if let Ok(provider) = build_provider() {
+                let _ = props_self_test(&provider);
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -603,6 +673,7 @@ fn main() {
             parse_and_analyze,
             solve_program,
             run_param_table,
+            props_status,
             open_equations_file,
             save_equations_file
         ])

@@ -1,4 +1,4 @@
-use crate::parser::ast::{BinaryOp, ExprKind, StatementKind, UnaryOp};
+use crate::parser::ast::{BinaryOp, CallArg, ExprKind, StatementKind, UnaryOp};
 use crate::parser::{parse_expression, parse_program};
 
 #[test]
@@ -141,4 +141,46 @@ fn rejects_unit_annotation_on_identifier() {
         .message
         .contains("Unit annotations are only allowed on numeric literals")
         || d.message.contains("Expected end of input")));
+}
+
+#[test]
+fn parses_ees_keyword_arguments_with_trailing_comma() {
+    let expr = parse_expression("Enthalpy(\"Water\", T=300, P=101325,)").expect("should parse");
+    let ExprKind::Call { callee, args } = expr.kind else {
+        panic!("expected call");
+    };
+    assert_eq!(callee, "Enthalpy");
+    assert!(matches!(args[0], CallArg::Positional(_)));
+    assert!(matches!(args[1], CallArg::Keyword { ref name, .. } if name == "T"));
+    assert!(matches!(args[2], CallArg::Keyword { ref name, .. } if name == "P"));
+}
+
+#[test]
+fn parses_mixed_positional_and_keyword_arguments() {
+    let expr = parse_expression("Entropy(fluid, P=101325, T=300)").expect("should parse");
+    let ExprKind::Call { args, .. } = expr.kind else {
+        panic!("expected call");
+    };
+    assert!(matches!(args[0], CallArg::Positional(_)));
+    assert!(matches!(args[1], CallArg::Keyword { ref name, .. } if name == "P"));
+    assert!(matches!(args[2], CallArg::Keyword { ref name, .. } if name == "T"));
+}
+
+#[test]
+fn reports_missing_equals_in_call_argument() {
+    let diagnostics =
+        parse_expression("Enthalpy(\"Water\", T 300, P=101325)").expect_err("should fail");
+    assert!(diagnostics
+        .iter()
+        .any(|d| d.message.contains("did you mean to use '='")));
+}
+
+#[test]
+fn parses_duplicate_keyword_arguments() {
+    let expr = parse_expression("Enthalpy(\"Water\", T=300, T=310)").expect("should parse");
+    let ExprKind::Call { args, .. } = expr.kind else {
+        panic!("expected call");
+    };
+    assert!(matches!(args[1], CallArg::Keyword { ref name, .. } if name == "T"));
+    assert!(matches!(args[2], CallArg::Keyword { ref name, .. } if name == "T"));
 }

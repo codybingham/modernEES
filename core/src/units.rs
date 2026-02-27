@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Add, Sub};
 
-use crate::parser::ast::{BinaryOp, Expr, ExprKind, Program, StatementKind, UnaryOp};
+use crate::parser::ast::{BinaryOp, CallArg, Expr, ExprKind, Program, StatementKind, UnaryOp};
 use crate::parser::diagnostic::{Diagnostic, Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -397,7 +397,7 @@ fn infer_expr_unit(
 }
 
 fn infer_conversion_call(
-    args: &[Expr],
+    args: &[CallArg],
     registry: &UnitRegistry,
     env: &HashMap<String, UnitKnowledge>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -407,11 +407,22 @@ fn infer_conversion_call(
         return UnitKnowledge::Unknown;
     }
 
-    let source = infer_expr_unit(&args[0], env, registry, diagnostics);
-    let ExprKind::StringLiteral(unit_text) = &args[1].kind else {
+    let CallArg::Positional(source_expr) = &args[0] else {
+        return UnitKnowledge::Unknown;
+    };
+    let source = infer_expr_unit(source_expr, env, registry, diagnostics);
+    let CallArg::Positional(unit_expr) = &args[1] else {
+        diagnostics.push(Diagnostic::new(
+            "to(x, unit) requires positional arguments",
+            span,
+        ));
+        return UnitKnowledge::Unknown;
+    };
+
+    let ExprKind::StringLiteral(unit_text) = &unit_expr.kind else {
         diagnostics.push(Diagnostic::new(
             "to(x, unit) requires a string literal unit",
-            args[1].span,
+            unit_expr.span,
         ));
         return UnitKnowledge::Unknown;
     };
@@ -421,7 +432,7 @@ fn infer_conversion_call(
         Err(message) => {
             diagnostics.push(Diagnostic::new(
                 format!("Invalid conversion target unit '{}': {message}", unit_text),
-                args[1].span,
+                unit_expr.span,
             ));
             return UnitKnowledge::Unknown;
         }
