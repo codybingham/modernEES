@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::{Add, Sub};
 
 use crate::parser::ast::{BinaryOp, Expr, ExprKind, Program, StatementKind, UnaryOp};
 use crate::parser::diagnostic::{Diagnostic, Span};
@@ -18,26 +19,6 @@ impl Dimension {
     }
 
     #[must_use]
-    pub fn add(self, rhs: Self) -> Self {
-        Self {
-            mass: self.mass + rhs.mass,
-            length: self.length + rhs.length,
-            time: self.time + rhs.time,
-            temperature: self.temperature + rhs.temperature,
-        }
-    }
-
-    #[must_use]
-    pub fn sub(self, rhs: Self) -> Self {
-        Self {
-            mass: self.mass - rhs.mass,
-            length: self.length - rhs.length,
-            time: self.time - rhs.time,
-            temperature: self.temperature - rhs.temperature,
-        }
-    }
-
-    #[must_use]
     pub fn scale(self, factor: i32) -> Self {
         Self {
             mass: self.mass * factor,
@@ -50,6 +31,32 @@ impl Dimension {
     #[must_use]
     pub fn is_dimensionless(self) -> bool {
         self == Self::dimensionless()
+    }
+}
+
+impl Add for Dimension {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            mass: self.mass + rhs.mass,
+            length: self.length + rhs.length,
+            time: self.time + rhs.time,
+            temperature: self.temperature + rhs.temperature,
+        }
+    }
+}
+
+impl Sub for Dimension {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            mass: self.mass - rhs.mass,
+            length: self.length - rhs.length,
+            time: self.time - rhs.time,
+            temperature: self.temperature - rhs.temperature,
+        }
     }
 }
 
@@ -76,7 +83,7 @@ impl Unit {
     #[must_use]
     pub fn multiply(self, rhs: Self) -> Self {
         Self {
-            dimension: self.dimension.add(rhs.dimension),
+            dimension: self.dimension + rhs.dimension,
             scale: self.scale * rhs.scale,
         }
     }
@@ -84,7 +91,7 @@ impl Unit {
     #[must_use]
     pub fn divide(self, rhs: Self) -> Self {
         Self {
-            dimension: self.dimension.sub(rhs.dimension),
+            dimension: self.dimension - rhs.dimension,
             scale: self.scale / rhs.scale,
         }
     }
