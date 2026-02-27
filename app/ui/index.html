@@ -10,6 +10,7 @@
       .card { background: #fff; border-radius: 8px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
       textarea, input, select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px; }
       button { margin-top: 8px; padding: 8px 10px; cursor: pointer; }
+      .small-btn { margin-top: 0; padding: 4px 8px; font-size: 12px; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       #equations { min-height: 220px; }
       #diagnostics { min-height: 120px; }
@@ -31,6 +32,17 @@
       table { border-collapse: collapse; width: 100%; }
       th, td { border: 1px solid #ddd; padding: 4px; font-size: 12px; }
       #plotCanvas { width: 100%; height: 260px; border: 1px solid #ddd; }
+      .section-header { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+      .entry-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+      .entry-card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; background: #f9fafb; }
+      .entry-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+      .field { display: flex; flex-direction: column; gap: 4px; }
+      .field label { font-size: 12px; color: #374151; }
+      .error-text { color: #b91c1c; font-size: 11px; min-height: 14px; }
+      .error-summary { color: #b91c1c; font-size: 12px; margin-top: 6px; }
+      details { margin-top: 10px; }
+      summary { cursor: pointer; font-size: 13px; color: #1f2937; }
+      .json-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     </style>
   </head>
   <body>
@@ -52,15 +64,35 @@ x - y = 2</textarea>
 
       <div class="card">
         <h3>Param Table</h3>
-        <label>Sweeps JSON</label>
-        <textarea id="sweeps" class="mono">[
-  {"var":"x","values":[1,2,3,4]}
-]</textarea>
-        <label>Columns JSON</label>
-        <textarea id="columns" class="mono">[
-  {"name":"x","expression":"x"},
-  {"name":"y","expression":"y"}
-]</textarea>
+        <div class="section-header">
+          <h4>Sweeps</h4>
+          <button id="addSweepBtn" class="small-btn" type="button">+ Add sweep</button>
+        </div>
+        <div id="sweepErrors" class="error-summary"></div>
+        <div id="sweepsList" class="entry-list"></div>
+
+        <div class="section-header">
+          <h4>Columns</h4>
+          <button id="addColumnBtn" class="small-btn" type="button">+ Add column</button>
+        </div>
+        <div id="columnErrors" class="error-summary"></div>
+        <div id="columnsList" class="entry-list"></div>
+
+        <details>
+          <summary>Advanced JSON</summary>
+          <div class="json-grid">
+            <div>
+              <label>Sweeps JSON</label>
+              <textarea id="sweepsJson" class="mono"></textarea>
+            </div>
+            <div>
+              <label>Columns JSON</label>
+              <textarea id="columnsJson" class="mono"></textarea>
+            </div>
+          </div>
+          <button id="applyJsonBtn" class="small-btn" type="button">Apply JSON</button>
+          <div id="jsonErrors" class="error-summary"></div>
+        </details>
         <button id="runTableBtn">Run Table</button>
         <div id="resultsGrid"></div>
       </div>
@@ -82,6 +114,138 @@ x - y = 2</textarea>
       let latestRows = [];
       let currentFilePath = null;
       let currentSummary = '';
+      let tableSpecState = {
+        sweeps: [{ var: 'x', valuesInput: '1,2,3,4' }],
+        columns: [{ name: 'x', expression: 'x' }, { name: 'y', expression: 'y' }],
+      };
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function normalizeNumberList(valuesInput) {
+        const tokens = String(valuesInput ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+        const parsed = tokens.map((token) => Number(token));
+        return {
+          values: parsed,
+          invalidTokens: tokens.filter((token, idx) => !Number.isFinite(parsed[idx])),
+        };
+      }
+
+      function validateTableSpecState() {
+        const errors = { sweeps: {}, columns: {}, summary: [] };
+        tableSpecState.sweeps.forEach((sweep, index) => {
+          const rowErrors = {};
+          if (!String(sweep.var || '').trim()) rowErrors.var = 'Variable is required.';
+          const { values, invalidTokens } = normalizeNumberList(sweep.valuesInput);
+          if (!values.length) rowErrors.values = 'At least one numeric value is required.';
+          if (invalidTokens.length) rowErrors.values = `Invalid numbers: ${invalidTokens.join(', ')}`;
+          if (Object.keys(rowErrors).length) errors.sweeps[index] = rowErrors;
+        });
+
+        tableSpecState.columns.forEach((column, index) => {
+          const rowErrors = {};
+          if (!String(column.name || '').trim()) rowErrors.name = 'Column name is required.';
+          if (!String(column.expression || '').trim()) rowErrors.expression = 'Expression is required.';
+          if (Object.keys(rowErrors).length) errors.columns[index] = rowErrors;
+        });
+
+        if (Object.keys(errors.sweeps).length) errors.summary.push('Fix errors in sweeps.');
+        if (Object.keys(errors.columns).length) errors.summary.push('Fix errors in columns.');
+        return errors;
+      }
+
+      function specFromState() {
+        return {
+          sweeps: tableSpecState.sweeps.map((sweep) => ({
+            var: String(sweep.var || '').trim(),
+            values: normalizeNumberList(sweep.valuesInput).values,
+          })),
+          columns: tableSpecState.columns.map((column) => ({
+            name: String(column.name || '').trim(),
+            expression: String(column.expression || '').trim(),
+          })),
+        };
+      }
+
+      function syncAdvancedJson() {
+        const spec = specFromState();
+        el('sweepsJson').value = JSON.stringify(spec.sweeps, null, 2);
+        el('columnsJson').value = JSON.stringify(spec.columns, null, 2);
+      }
+
+      function renderTableSpecEditor(validationErrors = validateTableSpecState()) {
+        const sweepsList = el('sweepsList');
+        sweepsList.innerHTML = tableSpecState.sweeps.map((sweep, index) => {
+          const rowErrors = validationErrors.sweeps[index] || {};
+          return `
+            <div class="entry-card" data-sweep-row="${index}">
+              <div class="entry-grid">
+                <div class="field">
+                  <label>Variable</label>
+                  <input data-sweep-var="${index}" value="${escapeHtml(sweep.var)}" />
+                  <div class="error-text">${escapeHtml(rowErrors.var || '')}</div>
+                </div>
+                <div class="field">
+                  <label>Values (comma-separated)</label>
+                  <input data-sweep-values="${index}" value="${escapeHtml(sweep.valuesInput)}" />
+                  <div class="error-text">${escapeHtml(rowErrors.values || '')}</div>
+                </div>
+                <button data-remove-sweep="${index}" class="small-btn" type="button">Remove</button>
+              </div>
+            </div>
+          `;
+        }).join('') || '<div class="diag-meta">No sweeps configured.</div>';
+
+        const columnsList = el('columnsList');
+        columnsList.innerHTML = tableSpecState.columns.map((column, index) => {
+          const rowErrors = validationErrors.columns[index] || {};
+          return `
+            <div class="entry-card" data-column-row="${index}">
+              <div class="entry-grid">
+                <div class="field">
+                  <label>Name</label>
+                  <input data-column-name="${index}" value="${escapeHtml(column.name)}" />
+                  <div class="error-text">${escapeHtml(rowErrors.name || '')}</div>
+                </div>
+                <div class="field">
+                  <label>Expression</label>
+                  <input data-column-expression="${index}" value="${escapeHtml(column.expression)}" />
+                  <div class="error-text">${escapeHtml(rowErrors.expression || '')}</div>
+                </div>
+                <button data-remove-column="${index}" class="small-btn" type="button">Remove</button>
+              </div>
+            </div>
+          `;
+        }).join('') || '<div class="diag-meta">No columns configured.</div>';
+
+        el('sweepErrors').textContent = Object.keys(validationErrors.sweeps).length ? 'Please resolve sweep errors.' : '';
+        el('columnErrors').textContent = Object.keys(validationErrors.columns).length ? 'Please resolve column errors.' : '';
+        syncAdvancedJson();
+      }
+
+      function parseAdvancedJsonToState() {
+        const sweeps = JSON.parse(el('sweepsJson').value);
+        const columns = JSON.parse(el('columnsJson').value);
+        if (!Array.isArray(sweeps) || !Array.isArray(columns)) {
+          throw new Error('Sweeps and columns JSON must both be arrays.');
+        }
+        tableSpecState = {
+          sweeps: sweeps.map((sweep) => ({
+            var: String(sweep?.var ?? ''),
+            valuesInput: Array.isArray(sweep?.values) ? sweep.values.join(',') : '',
+          })),
+          columns: columns.map((column) => ({
+            name: String(column?.name ?? ''),
+            expression: String(column?.expression ?? ''),
+          })),
+        };
+      }
 
       function lineColumnLabel(span) {
         if (!span || !span.line || !span.column) return 'L?:?';
@@ -283,10 +447,67 @@ x - y = 2</textarea>
         }
       };
 
+      el('sweepsList').addEventListener('input', (event) => {
+        const sweepVarIndex = event.target?.dataset?.sweepVar;
+        const sweepValuesIndex = event.target?.dataset?.sweepValues;
+
+        if (sweepVarIndex != null) tableSpecState.sweeps[Number(sweepVarIndex)].var = event.target.value;
+        if (sweepValuesIndex != null) tableSpecState.sweeps[Number(sweepValuesIndex)].valuesInput = event.target.value;
+        renderTableSpecEditor();
+      });
+
+      el('columnsList').addEventListener('input', (event) => {
+        const columnNameIndex = event.target?.dataset?.columnName;
+        const columnExprIndex = event.target?.dataset?.columnExpression;
+        if (columnNameIndex != null) tableSpecState.columns[Number(columnNameIndex)].name = event.target.value;
+        if (columnExprIndex != null) tableSpecState.columns[Number(columnExprIndex)].expression = event.target.value;
+        renderTableSpecEditor();
+      });
+
+      el('sweepsList').addEventListener('click', (event) => {
+        const removeIndex = event.target?.dataset?.removeSweep;
+        if (removeIndex == null) return;
+        tableSpecState.sweeps.splice(Number(removeIndex), 1);
+        renderTableSpecEditor();
+      });
+
+      el('columnsList').addEventListener('click', (event) => {
+        const removeIndex = event.target?.dataset?.removeColumn;
+        if (removeIndex == null) return;
+        tableSpecState.columns.splice(Number(removeIndex), 1);
+        renderTableSpecEditor();
+      });
+
+      el('addSweepBtn').onclick = () => {
+        tableSpecState.sweeps.push({ var: '', valuesInput: '' });
+        renderTableSpecEditor();
+      };
+
+      el('addColumnBtn').onclick = () => {
+        tableSpecState.columns.push({ name: '', expression: '' });
+        renderTableSpecEditor();
+      };
+
+      el('applyJsonBtn').onclick = () => {
+        try {
+          parseAdvancedJsonToState();
+          el('jsonErrors').textContent = '';
+          renderTableSpecEditor();
+        } catch (err) {
+          el('jsonErrors').textContent = `Invalid JSON: ${err}`;
+        }
+      };
+
       el('runTableBtn').onclick = async () => {
         try {
-          const sweeps = JSON.parse(el('sweeps').value);
-          const columns = JSON.parse(el('columns').value);
+          const validationErrors = validateTableSpecState();
+          if (validationErrors.summary.length) {
+            renderTableSpecEditor(validationErrors);
+            showDiagnostics({ textLines: ['Run table blocked: fix Param Table input errors.'] });
+            return;
+          }
+
+          const { sweeps, columns } = specFromState();
           const data = await safeInvoke('run_param_table', {
             equationsText: el('equations').value,
             tableSpec: { sweeps, columns },
@@ -307,6 +528,8 @@ x - y = 2</textarea>
 
       el('xCol').onchange = drawPlot;
       el('yCol').onchange = drawPlot;
+
+      renderTableSpecEditor();
 
       async function openFromDisk() {
         try {
