@@ -2,4 +2,4 @@
 
 pub mod parser;
 
-pub use parser::{ast, diagnostic, parse_program};
+pub use parser::{ast, diagnostic, parse_expression, parse_program};

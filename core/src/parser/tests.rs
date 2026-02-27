@@ -1,5 +1,5 @@
 use crate::parser::ast::{BinaryOp, ExprKind, StatementKind, UnaryOp};
-use crate::parser::parse_program;
+use crate::parser::{parse_expression, parse_program};
 
 #[test]
 fn parses_simple_assignment() {
@@ -90,4 +90,55 @@ fn reports_missing_closing_paren() {
     assert!(diagnostics
         .iter()
         .any(|d| d.message.contains("Expected ')' after expression")));
+}
+
+#[test]
+fn parses_quantity_literal_expression() {
+    let expr = parse_expression("10 [m]").expect("should parse");
+    match expr.kind {
+        ExprKind::QuantityLiteral { value, unit, .. } => {
+            assert_eq!(value, 10.0);
+            assert_eq!(unit, "m");
+        }
+        _ => panic!("expected quantity literal"),
+    }
+}
+
+#[test]
+fn parses_quantity_literal_in_assignment() {
+    let program = parse_program(
+        "rho = 62.4 [lbm/ft^3]
+",
+    )
+    .expect("should parse");
+    let StatementKind::Assignment { rhs, .. } = &program.statements[0].kind;
+    match &rhs.kind {
+        ExprKind::QuantityLiteral { value, unit, .. } => {
+            assert_eq!(*value, 62.4);
+            assert_eq!(unit, "lbm/ft^3");
+        }
+        _ => panic!("expected quantity literal"),
+    }
+}
+
+#[test]
+fn reports_unterminated_unit_annotation() {
+    let diagnostics = parse_expression("10 [").expect_err("should fail");
+    assert!(diagnostics[0]
+        .message
+        .contains("Unterminated unit annotation"));
+
+    let diagnostics = parse_expression("10 [m").expect_err("should fail");
+    assert!(diagnostics[0]
+        .message
+        .contains("Unterminated unit annotation"));
+}
+
+#[test]
+fn rejects_unit_annotation_on_identifier() {
+    let diagnostics = parse_expression("x [m]").expect_err("should fail");
+    assert!(diagnostics.iter().any(|d| d
+        .message
+        .contains("Unit annotations are only allowed on numeric literals")
+        || d.message.contains("Expected end of input")));
 }

@@ -25,6 +25,11 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Number(String),
+    QuantityLiteral {
+        value: f64,
+        unit: String,
+        span: Span,
+    },
     Identifier(String),
     StringLiteral(String),
     Unary {
