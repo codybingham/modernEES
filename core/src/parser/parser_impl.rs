@@ -14,6 +14,33 @@ pub fn parse_program(input: &str) -> Result<Program, Vec<Diagnostic>> {
     }
 }
 
+pub fn parse_expression(input: &str) -> Result<Expr, Vec<Diagnostic>> {
+    let tokens = lex(input)?;
+    let mut parser = Parser::new(tokens);
+
+    while parser.matches(|k| matches!(k, TokenKind::Newline)) {}
+
+    let expr = match parser.parse_expression() {
+        Some(expr) => expr,
+        None => return Err(parser.diagnostics),
+    };
+
+    while parser.matches(|k| matches!(k, TokenKind::Newline)) {}
+
+    if !parser.check(|k| matches!(k, TokenKind::Eof)) {
+        let span = parser.peek().span;
+        parser
+            .diagnostics
+            .push(Diagnostic::new("Expected end of input", span));
+    }
+
+    if parser.diagnostics.is_empty() {
+        Ok(expr)
+    } else {
+        Err(parser.diagnostics)
+    }
+}
+
 struct Parser {
     tokens: Vec<Token>,
     current: usize,
@@ -52,8 +79,15 @@ impl Parser {
 
         if !self.matches(|k| matches!(k, TokenKind::Equal)) {
             let span = self.peek().span;
-            self.diagnostics
-                .push(Diagnostic::new("Expected '=' in assignment", span));
+            if self.check(|k| matches!(k, TokenKind::UnitAnnotation(_))) {
+                self.diagnostics.push(Diagnostic::new(
+                    "Unit annotations are only allowed on numeric literals",
+                    span,
+                ));
+            } else {
+                self.diagnostics
+                    .push(Diagnostic::new("Expected '=' in assignment", span));
+            }
             return None;
         }
 
@@ -200,10 +234,39 @@ impl Parser {
         match token.kind {
             TokenKind::Number(ref n) => {
                 self.advance();
-                Some(Expr {
+                let mut expr = Expr {
                     kind: ExprKind::Number(n.clone()),
                     span: token.span,
-                })
+                };
+
+                if self.matches(|k| matches!(k, TokenKind::UnitAnnotation(_))) {
+                    let unit_token = self.previous().clone();
+                    let TokenKind::UnitAnnotation(unit) = unit_token.kind else {
+                        unreachable!();
+                    };
+
+                    let value = match n.parse::<f64>() {
+                        Ok(value) => value,
+                        Err(_) => {
+                            self.diagnostics.push(Diagnostic::new(
+                                "Invalid numeric literal for quantity",
+                                token.span,
+                            ));
+                            return None;
+                        }
+                    };
+
+                    let span = Span {
+                        start: token.span.start,
+                        end: unit_token.span.end,
+                    };
+                    expr = Expr {
+                        kind: ExprKind::QuantityLiteral { value, unit, span },
+                        span,
+                    };
+                }
+
+                Some(expr)
             }
             TokenKind::Identifier(ref name) => {
                 self.advance();
@@ -339,6 +402,7 @@ fn token_description(kind: &TokenKind) -> &'static str {
         TokenKind::LParen => "'('",
         TokenKind::RParen => "')'",
         TokenKind::Comma => "','",
+        TokenKind::UnitAnnotation(_) => "unit annotation",
         TokenKind::Newline => "end of line",
         TokenKind::Eof => "end of input",
     }

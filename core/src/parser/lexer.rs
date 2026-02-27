@@ -14,6 +14,7 @@ pub enum TokenKind {
     LParen,
     RParen,
     Comma,
+    UnitAnnotation(String),
     Newline,
     Eof,
 }
@@ -110,6 +111,7 @@ impl<'a> Lexer<'a> {
                     let span = self.single_char_span();
                     self.push_token(TokenKind::Comma, span);
                 }
+                '[' => self.lex_unit_annotation(),
                 '"' => self.lex_string(),
                 c if c.is_ascii_digit() => self.lex_number(),
                 c if is_identifier_start(c) => self.lex_identifier(),
@@ -242,6 +244,38 @@ impl<'a> Lexer<'a> {
         } else {
             self.diagnostics.push(Diagnostic::new(
                 "Unterminated string literal",
+                Span { start, end },
+            ));
+        }
+    }
+
+    fn lex_unit_annotation(&mut self) {
+        let start = self.current_position();
+        self.bump();
+        let mut value = String::new();
+        let mut terminated = false;
+
+        while let Some((_, ch)) = self.peek().copied() {
+            match ch {
+                ']' => {
+                    self.bump();
+                    terminated = true;
+                    break;
+                }
+                '\n' => break,
+                _ => {
+                    value.push(ch);
+                    self.bump();
+                }
+            }
+        }
+
+        let end = self.current_position();
+        if terminated {
+            self.push_token(TokenKind::UnitAnnotation(value), Span { start, end });
+        } else {
+            self.diagnostics.push(Diagnostic::new(
+                "Unterminated unit annotation",
                 Span { start, end },
             ));
         }
