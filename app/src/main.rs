@@ -453,6 +453,42 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             None::<&str>,
         )?],
     )?;
+    let search_menu = Submenu::with_items(
+        app,
+        "Search",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "search_placeholder",
+            "Find",
+            false,
+            Some("Ctrl+F"),
+        )?],
+    )?;
+    let window_menu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "window_placeholder",
+            "Cascade",
+            false,
+            None::<&str>,
+        )?],
+    )?;
+    let examples_menu = Submenu::with_items(
+        app,
+        "Examples",
+        true,
+        &[&MenuItem::with_id(
+            app,
+            "examples_placeholder",
+            "Open Example",
+            false,
+            None::<&str>,
+        )?],
+    )?;
     let help_menu = Submenu::with_items(
         app,
         "Help",
@@ -471,11 +507,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &file_menu,
             &edit_menu,
+            &search_menu,
+            &options_menu,
             &calculate_menu,
             &tables_menu,
             &plots_menu,
-            &options_menu,
+            &window_menu,
             &help_menu,
+            &examples_menu,
         ],
     )
 }

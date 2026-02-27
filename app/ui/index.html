@@ -5,106 +5,182 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>modernEES</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 0; background: #f3f4f6; }
-      .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
-      .card { background: #fff; border-radius: 8px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-      textarea, input, select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px; }
-      button { margin-top: 8px; padding: 8px 10px; cursor: pointer; }
-      .small-btn { margin-top: 0; padding: 4px 8px; font-size: 12px; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      #equations { min-height: 220px; }
-      #diagnostics { min-height: 120px; }
-      .diagnostics-list { display: flex; flex-direction: column; gap: 6px; }
-      .diag-item {
-        border: 1px solid #e5e7eb;
-        border-radius: 6px;
-        padding: 6px;
-        text-align: left;
-        width: 100%;
-        background: #f9fafb;
+      :root {
+        --bg: #c0c0c0;
+        --panel: #d4d0c8;
+        --line: #808080;
+        --line-light: #ffffff;
+        --text: #111;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "MS Sans Serif", Tahoma, Arial, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      .toolbar {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        padding: 4px 6px;
+        background: var(--panel);
+        border-top: 1px solid var(--line-light);
+        border-bottom: 1px solid var(--line);
+      }
+      .separator { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+      .classic-btn {
+        background: var(--panel);
+        border-width: 1px;
+        border-style: solid;
+        border-color: var(--line-light) var(--line) var(--line) var(--line-light);
+        font-size: 12px;
+        padding: 3px 10px;
         cursor: pointer;
       }
-      .diag-item:hover { background: #eff6ff; border-color: #93c5fd; }
-      .diag-meta { font-size: 11px; color: #374151; }
-      .diag-message { margin-top: 2px; font-size: 12px; white-space: pre-wrap; }
-      .diag-summary { margin-bottom: 8px; font-size: 12px; color: #111827; }
-      #resultsGrid { max-height: 220px; overflow: auto; }
+      .classic-btn:active {
+        border-color: var(--line) var(--line-light) var(--line-light) var(--line);
+      }
+      .main {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 1fr 285px;
+        gap: 6px;
+        padding: 6px;
+      }
+      .panel {
+        background: #dcdcdc;
+        border: 1px solid var(--line);
+        box-shadow: inset 1px 1px 0 var(--line-light);
+      }
+      .left-pane {
+        display: grid;
+        grid-template-rows: minmax(340px, 1fr) 230px;
+        gap: 6px;
+        min-height: 0;
+      }
+      .header {
+        font-size: 12px;
+        padding: 4px 6px;
+        border-bottom: 1px solid #9b9b9b;
+        background: #d4d0c8;
+      }
+      .editor-wrap { display: flex; flex-direction: column; min-height: 0; }
+      textarea, input, select {
+        width: 100%;
+        background: #fff;
+        border: 1px solid #7f7f7f;
+        padding: 4px;
+      }
+      #equations {
+        flex: 1;
+        resize: none;
+        border: none;
+        border-top: 1px solid #7f7f7f;
+        font-family: "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .bottom-tools {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        padding: 6px;
+        min-height: 0;
+      }
+      .info-box { padding: 6px; font-family: "Courier New", monospace; font-size: 12px; white-space: pre-wrap; overflow: auto; }
+      #resultsGrid { max-height: 90px; overflow: auto; border: 1px solid #9a9a9a; background: #fff; }
       table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #ddd; padding: 4px; font-size: 12px; }
-      #plotCanvas { width: 100%; height: 260px; border: 1px solid #ddd; }
-      .section-header { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
-      .entry-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-      .entry-card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; background: #f9fafb; }
-      .entry-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
-      .field { display: flex; flex-direction: column; gap: 4px; }
-      .field label { font-size: 12px; color: #374151; }
-      .error-text { color: #b91c1c; font-size: 11px; min-height: 14px; }
-      .error-summary { color: #b91c1c; font-size: 12px; margin-top: 6px; }
-      details { margin-top: 10px; }
-      summary { cursor: pointer; font-size: 13px; color: #1f2937; }
-      .json-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      th, td { border: 1px solid #b0b0b0; padding: 3px 4px; font-size: 11px; }
+      #plotCanvas { width: 100%; height: 100px; border: 1px solid #9a9a9a; background: #fff; }
+      .mini-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px; }
+      .right-pane { display: flex; flex-direction: column; min-height: 0; }
+      .dock-content { padding: 8px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+      .checkline { display: flex; gap: 6px; font-size: 12px; align-items: center; }
+      .prog-list {
+        flex: 1;
+        min-height: 120px;
+        border: 1px solid #808080;
+        background: #fff;
+        margin: 0;
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      .statusbar {
+        display: flex;
+        gap: 10px;
+        padding: 3px 8px;
+        font-size: 12px;
+        background: var(--panel);
+        border-top: 1px solid var(--line-light);
+      }
+      .status-item { border-right: 1px solid #9b9b9b; padding-right: 10px; }
     </style>
   </head>
   <body>
-    <div class="layout">
-      <div class="card">
-        <h3>Equations Editor</h3>
-        <textarea id="equations" class="mono">x + y = 10
+    <div class="toolbar">
+      <button id="newBtn" class="classic-btn" type="button">📄 New</button>
+      <button id="openBtn" class="classic-btn" type="button">📂 Open</button>
+      <button id="saveBtn" class="classic-btn" type="button">💾 Save</button>
+      <div class="separator"></div>
+      <button id="analyzeBtn" class="classic-btn" type="button">Analyze</button>
+      <button id="solveBtn" class="classic-btn" type="button">Solve</button>
+      <button id="runTableBtn" class="classic-btn" type="button">Run Table</button>
+      <button id="plotBtn" class="classic-btn" type="button">Plot</button>
+    </div>
+
+    <div class="main">
+      <div class="left-pane">
+        <section class="panel editor-wrap">
+          <div class="header">Equations Window</div>
+          <textarea id="equations">x + y = 10
 x - y = 2</textarea>
-        <button id="analyzeBtn">Analyze</button>
-        <button id="solveBtn">Solve</button>
-      </div>
+        </section>
 
-      <div class="card">
-        <h3>Diagnostics</h3>
-        <div id="diagnostics" class="mono"></div>
-        <h4>Variables / Results</h4>
-        <div id="variables" class="mono"></div>
-      </div>
-
-      <div class="card">
-        <h3>Param Table</h3>
-        <div class="section-header">
-          <h4>Sweeps</h4>
-          <button id="addSweepBtn" class="small-btn" type="button">+ Add sweep</button>
-        </div>
-        <div id="sweepErrors" class="error-summary"></div>
-        <div id="sweepsList" class="entry-list"></div>
-
-        <div class="section-header">
-          <h4>Columns</h4>
-          <button id="addColumnBtn" class="small-btn" type="button">+ Add column</button>
-        </div>
-        <div id="columnErrors" class="error-summary"></div>
-        <div id="columnsList" class="entry-list"></div>
-
-        <details>
-          <summary>Advanced JSON</summary>
-          <div class="json-grid">
+        <section class="panel">
+          <div class="header">Diagnostics / Param Table / Plot</div>
+          <div class="bottom-tools">
             <div>
-              <label>Sweeps JSON</label>
-              <textarea id="sweepsJson" class="mono"></textarea>
+              <div class="header" style="margin: -6px -6px 6px;">Diagnostics</div>
+              <div id="diagnostics" class="info-box"></div>
+              <div class="header" style="margin: 6px -6px 6px;">Variables / Results</div>
+              <div id="variables" class="info-box"></div>
             </div>
             <div>
-              <label>Columns JSON</label>
-              <textarea id="columnsJson" class="mono"></textarea>
+              <div class="mini-controls">
+                <label>X <select id="xCol"></select></label>
+                <label>Y <select id="yCol"></select></label>
+              </div>
+              <canvas id="plotCanvas" width="520" height="100"></canvas>
+              <div class="header" style="margin: 6px 0;">Param Table</div>
+              <div id="resultsGrid"></div>
             </div>
           </div>
-          <button id="applyJsonBtn" class="small-btn" type="button">Apply JSON</button>
-          <div id="jsonErrors" class="error-summary"></div>
-        </details>
-        <button id="runTableBtn">Run Table</button>
-        <div id="resultsGrid"></div>
+        </section>
       </div>
 
-      <div class="card">
-        <h3>Plot</h3>
-        <label>X Column</label>
-        <select id="xCol"></select>
-        <label>Y Column</label>
-        <select id="yCol"></select>
-        <canvas id="plotCanvas" width="600" height="260"></canvas>
-      </div>
+      <aside class="panel right-pane">
+        <div class="header">Variable Info</div>
+        <div class="dock-content">
+          <button id="updateBtn" class="classic-btn" type="button">Update</button>
+          <label class="checkline"><input id="hiliteOnce" type="checkbox" /> Hilite vars used once</label>
+          <ul class="prog-list" id="programList">
+            <li>Main Program</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <div class="statusbar">
+      <span class="status-item">BW</span>
+      <span class="status-item">US</span>
+      <span class="status-item">Line #: Off</span>
+      <span class="status-item">Wrap: On</span>
+      <span class="status-item">Ready</span>
     </div>
 
     <script>
@@ -113,139 +189,6 @@ x - y = 2</textarea>
       const el = (id) => document.getElementById(id);
       let latestRows = [];
       let currentFilePath = null;
-      let currentSummary = '';
-      let tableSpecState = {
-        sweeps: [{ var: 'x', valuesInput: '1,2,3,4' }],
-        columns: [{ name: 'x', expression: 'x' }, { name: 'y', expression: 'y' }],
-      };
-
-      function escapeHtml(value) {
-        return String(value ?? '')
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&#39;');
-      }
-
-      function normalizeNumberList(valuesInput) {
-        const tokens = String(valuesInput ?? '').split(',').map((item) => item.trim()).filter(Boolean);
-        const parsed = tokens.map((token) => Number(token));
-        return {
-          values: parsed,
-          invalidTokens: tokens.filter((token, idx) => !Number.isFinite(parsed[idx])),
-        };
-      }
-
-      function validateTableSpecState() {
-        const errors = { sweeps: {}, columns: {}, summary: [] };
-        tableSpecState.sweeps.forEach((sweep, index) => {
-          const rowErrors = {};
-          if (!String(sweep.var || '').trim()) rowErrors.var = 'Variable is required.';
-          const { values, invalidTokens } = normalizeNumberList(sweep.valuesInput);
-          if (!values.length) rowErrors.values = 'At least one numeric value is required.';
-          if (invalidTokens.length) rowErrors.values = `Invalid numbers: ${invalidTokens.join(', ')}`;
-          if (Object.keys(rowErrors).length) errors.sweeps[index] = rowErrors;
-        });
-
-        tableSpecState.columns.forEach((column, index) => {
-          const rowErrors = {};
-          if (!String(column.name || '').trim()) rowErrors.name = 'Column name is required.';
-          if (!String(column.expression || '').trim()) rowErrors.expression = 'Expression is required.';
-          if (Object.keys(rowErrors).length) errors.columns[index] = rowErrors;
-        });
-
-        if (Object.keys(errors.sweeps).length) errors.summary.push('Fix errors in sweeps.');
-        if (Object.keys(errors.columns).length) errors.summary.push('Fix errors in columns.');
-        return errors;
-      }
-
-      function specFromState() {
-        return {
-          sweeps: tableSpecState.sweeps.map((sweep) => ({
-            var: String(sweep.var || '').trim(),
-            values: normalizeNumberList(sweep.valuesInput).values,
-          })),
-          columns: tableSpecState.columns.map((column) => ({
-            name: String(column.name || '').trim(),
-            expression: String(column.expression || '').trim(),
-          })),
-        };
-      }
-
-      function syncAdvancedJson() {
-        const spec = specFromState();
-        el('sweepsJson').value = JSON.stringify(spec.sweeps, null, 2);
-        el('columnsJson').value = JSON.stringify(spec.columns, null, 2);
-      }
-
-      function renderTableSpecEditor(validationErrors = validateTableSpecState()) {
-        const sweepsList = el('sweepsList');
-        sweepsList.innerHTML = tableSpecState.sweeps.map((sweep, index) => {
-          const rowErrors = validationErrors.sweeps[index] || {};
-          return `
-            <div class="entry-card" data-sweep-row="${index}">
-              <div class="entry-grid">
-                <div class="field">
-                  <label>Variable</label>
-                  <input data-sweep-var="${index}" value="${escapeHtml(sweep.var)}" />
-                  <div class="error-text">${escapeHtml(rowErrors.var || '')}</div>
-                </div>
-                <div class="field">
-                  <label>Values (comma-separated)</label>
-                  <input data-sweep-values="${index}" value="${escapeHtml(sweep.valuesInput)}" />
-                  <div class="error-text">${escapeHtml(rowErrors.values || '')}</div>
-                </div>
-                <button data-remove-sweep="${index}" class="small-btn" type="button">Remove</button>
-              </div>
-            </div>
-          `;
-        }).join('') || '<div class="diag-meta">No sweeps configured.</div>';
-
-        const columnsList = el('columnsList');
-        columnsList.innerHTML = tableSpecState.columns.map((column, index) => {
-          const rowErrors = validationErrors.columns[index] || {};
-          return `
-            <div class="entry-card" data-column-row="${index}">
-              <div class="entry-grid">
-                <div class="field">
-                  <label>Name</label>
-                  <input data-column-name="${index}" value="${escapeHtml(column.name)}" />
-                  <div class="error-text">${escapeHtml(rowErrors.name || '')}</div>
-                </div>
-                <div class="field">
-                  <label>Expression</label>
-                  <input data-column-expression="${index}" value="${escapeHtml(column.expression)}" />
-                  <div class="error-text">${escapeHtml(rowErrors.expression || '')}</div>
-                </div>
-                <button data-remove-column="${index}" class="small-btn" type="button">Remove</button>
-              </div>
-            </div>
-          `;
-        }).join('') || '<div class="diag-meta">No columns configured.</div>';
-
-        el('sweepErrors').textContent = Object.keys(validationErrors.sweeps).length ? 'Please resolve sweep errors.' : '';
-        el('columnErrors').textContent = Object.keys(validationErrors.columns).length ? 'Please resolve column errors.' : '';
-        syncAdvancedJson();
-      }
-
-      function parseAdvancedJsonToState() {
-        const sweeps = JSON.parse(el('sweepsJson').value);
-        const columns = JSON.parse(el('columnsJson').value);
-        if (!Array.isArray(sweeps) || !Array.isArray(columns)) {
-          throw new Error('Sweeps and columns JSON must both be arrays.');
-        }
-        tableSpecState = {
-          sweeps: sweeps.map((sweep) => ({
-            var: String(sweep?.var ?? ''),
-            valuesInput: Array.isArray(sweep?.values) ? sweep.values.join(',') : '',
-          })),
-          columns: columns.map((column) => ({
-            name: String(column?.name ?? ''),
-            expression: String(column?.expression ?? ''),
-          })),
-        };
-      }
 
       function lineColumnLabel(span) {
         if (!span || !span.line || !span.column) return 'L?:?';
@@ -263,50 +206,21 @@ x - y = 2</textarea>
         const editor = el('equations');
         const lines = editor.value.split('\n');
         const start = toOffset(lines, span?.line, span?.column);
-        const hasRange = span && Number.isFinite(span.end_line) && Number.isFinite(span.end_column)
-          && (span.end_line > span.line || (span.end_line === span.line && span.end_column > span.column));
-        const end = hasRange ? toOffset(lines, span.end_line, span.end_column) : start;
-
+        const end = (span?.end_line && span?.end_column)
+          ? toOffset(lines, span.end_line, span.end_column)
+          : start;
         editor.focus();
         editor.setSelectionRange(start, end);
       }
 
       function showDiagnostics({ summary = '', diagnostics = [], textLines = [] } = {}) {
-        currentSummary = summary || '';
         const panel = el('diagnostics');
         panel.innerHTML = '';
-
-        if (currentSummary) {
-          const summaryEl = document.createElement('div');
-          summaryEl.className = 'diag-summary';
-          summaryEl.textContent = currentSummary;
-          panel.appendChild(summaryEl);
-        }
-
-        if (diagnostics.length) {
-          const list = document.createElement('div');
-          list.className = 'diagnostics-list';
-          diagnostics.forEach((diag) => {
-            const item = document.createElement('button');
-            item.type = 'button';
-            item.className = 'diag-item';
-            const sev = (diag.severity || diag.source || 'info').toUpperCase();
-            item.innerHTML = `<div class="diag-meta">${sev} • ${lineColumnLabel(diag.span)}</div><div class="diag-message">${diag.message}</div>`;
-            if (diag.span) {
-              item.onclick = () => focusEditorSpan(diag.span);
-            } else {
-              item.disabled = true;
-            }
-            list.appendChild(item);
-          });
-          panel.appendChild(list);
-        } else if (textLines.length) {
-          const plain = document.createElement('div');
-          plain.textContent = textLines.join('\n');
-          panel.appendChild(plain);
-        } else if (!currentSummary) {
-          panel.textContent = 'No diagnostics';
-        }
+        const lines = [];
+        if (summary) lines.push(summary);
+        diagnostics.forEach((diag) => lines.push(`[${(diag.severity || diag.source || 'info').toUpperCase()} ${lineColumnLabel(diag.span)}] ${diag.message}`));
+        lines.push(...textLines);
+        panel.textContent = lines.length ? lines.join('\n') : 'No diagnostics';
       }
 
       function showVariables(vars) {
@@ -341,34 +255,19 @@ x - y = 2</textarea>
         const maxX = Math.max(...points.map((p) => p.x));
         const minY = Math.min(...points.map((p) => p.y));
         const maxY = Math.max(...points.map((p) => p.y));
-        const pad = 24;
+        const pad = 20;
         const sx = (x) => pad + ((x - minX) / (maxX - minX || 1)) * (c.width - 2 * pad);
         const sy = (y) => c.height - pad - ((y - minY) / (maxY - minY || 1)) * (c.height - 2 * pad);
 
-        ctx.strokeStyle = '#999';
+        ctx.strokeStyle = '#666';
         ctx.strokeRect(pad, pad, c.width - 2 * pad, c.height - 2 * pad);
-        ctx.fillStyle = '#111';
-        ctx.fillText(`${xKey}`, c.width / 2, c.height - 4);
-        ctx.save();
-        ctx.translate(6, c.height / 2);
-        ctx.rotate(-Math.PI / 2);
-        ctx.fillText(`${yKey}`, 0, 0);
-        ctx.restore();
-
-        ctx.strokeStyle = '#2563eb';
+        ctx.strokeStyle = '#1d4ed8';
         ctx.beginPath();
         points.forEach((p, i) => {
           const x = sx(p.x), y = sy(p.y);
           if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         });
         ctx.stroke();
-
-        ctx.fillStyle = '#dc2626';
-        points.forEach((p) => {
-          ctx.beginPath();
-          ctx.arc(sx(p.x), sy(p.y), 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        });
       }
 
       function renderRows(rows) {
@@ -383,9 +282,7 @@ x - y = 2</textarea>
         if (cols.length > 1) el('yCol').value = cols[1];
 
         const head = `<tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr>`;
-        const body = latestRows
-          .map((r) => `<tr>${cols.map((c) => `<td>${r[c] ?? ''}</td>`).join('')}</tr>`)
-          .join('');
+        const body = latestRows.map((r) => `<tr>${cols.map((c) => `<td>${r[c] ?? ''}</td>`).join('')}</tr>`).join('');
         el('resultsGrid').innerHTML = `<table>${head}${body}</table>`;
         drawPlot();
       }
@@ -395,7 +292,7 @@ x - y = 2</textarea>
         return invoke(cmd, payload);
       }
 
-      el('analyzeBtn').onclick = async () => {
+      async function runAnalyze() {
         try {
           const data = await safeInvoke('parse_and_analyze', { equationsText: el('equations').value });
           const summary = data.identifiers?.length ? `Identifiers: ${data.identifiers.join(', ')}` : '';
@@ -403,7 +300,7 @@ x - y = 2</textarea>
         } catch (err) {
           showDiagnostics({ textLines: [`Analyze failed: ${err}`] });
         }
-      };
+      }
 
       function findEquationSnippetFromSpan(span) {
         if (!span?.line) return '';
@@ -411,7 +308,7 @@ x - y = 2</textarea>
         return (lines[span.line - 1] || '').trim();
       }
 
-      el('solveBtn').onclick = async () => {
+      async function runSolve() {
         try {
           const data = await safeInvoke('solve_program', { equationsText: el('equations').value, options: null });
           const summaryParts = [];
@@ -422,9 +319,7 @@ x - y = 2</textarea>
             if (data.message) summaryParts.push(data.message);
             if (data.worst_residual?.span?.line) {
               const eq = findEquationSnippetFromSpan(data.worst_residual.span);
-              if (eq) {
-                summaryParts.push(`Max residual at line ${data.worst_residual.span.line}: ${eq}`);
-              }
+              if (eq) summaryParts.push(`Max residual at line ${data.worst_residual.span.line}: ${eq}`);
             }
           }
           if (data.iterations != null) summaryParts.push(`Iterations: ${data.iterations}`);
@@ -432,12 +327,7 @@ x - y = 2</textarea>
 
           const diagnostics = [...(data.diagnostics || [])];
           if (data.worst_residual?.span) {
-            diagnostics.unshift({
-              severity: 'error',
-              source: 'solver',
-              message: `Max residual ${data.worst_residual.residual}`,
-              span: data.worst_residual.span,
-            });
+            diagnostics.unshift({ severity: 'error', source: 'solver', message: `Max residual ${data.worst_residual.residual}`, span: data.worst_residual.span });
           }
 
           showDiagnostics({ summary: summaryParts.join(' '), diagnostics });
@@ -445,91 +335,26 @@ x - y = 2</textarea>
         } catch (err) {
           showDiagnostics({ textLines: [`Solve failed: ${err}`] });
         }
-      };
+      }
 
-      el('sweepsList').addEventListener('input', (event) => {
-        const sweepVarIndex = event.target?.dataset?.sweepVar;
-        const sweepValuesIndex = event.target?.dataset?.sweepValues;
-
-        if (sweepVarIndex != null) tableSpecState.sweeps[Number(sweepVarIndex)].var = event.target.value;
-        if (sweepValuesIndex != null) tableSpecState.sweeps[Number(sweepValuesIndex)].valuesInput = event.target.value;
-        renderTableSpecEditor();
-      });
-
-      el('columnsList').addEventListener('input', (event) => {
-        const columnNameIndex = event.target?.dataset?.columnName;
-        const columnExprIndex = event.target?.dataset?.columnExpression;
-        if (columnNameIndex != null) tableSpecState.columns[Number(columnNameIndex)].name = event.target.value;
-        if (columnExprIndex != null) tableSpecState.columns[Number(columnExprIndex)].expression = event.target.value;
-        renderTableSpecEditor();
-      });
-
-      el('sweepsList').addEventListener('click', (event) => {
-        const removeIndex = event.target?.dataset?.removeSweep;
-        if (removeIndex == null) return;
-        tableSpecState.sweeps.splice(Number(removeIndex), 1);
-        renderTableSpecEditor();
-      });
-
-      el('columnsList').addEventListener('click', (event) => {
-        const removeIndex = event.target?.dataset?.removeColumn;
-        if (removeIndex == null) return;
-        tableSpecState.columns.splice(Number(removeIndex), 1);
-        renderTableSpecEditor();
-      });
-
-      el('addSweepBtn').onclick = () => {
-        tableSpecState.sweeps.push({ var: '', valuesInput: '' });
-        renderTableSpecEditor();
-      };
-
-      el('addColumnBtn').onclick = () => {
-        tableSpecState.columns.push({ name: '', expression: '' });
-        renderTableSpecEditor();
-      };
-
-      el('applyJsonBtn').onclick = () => {
+      async function runTable() {
         try {
-          parseAdvancedJsonToState();
-          el('jsonErrors').textContent = '';
-          renderTableSpecEditor();
-        } catch (err) {
-          el('jsonErrors').textContent = `Invalid JSON: ${err}`;
-        }
-      };
-
-      el('runTableBtn').onclick = async () => {
-        try {
-          const validationErrors = validateTableSpecState();
-          if (validationErrors.summary.length) {
-            renderTableSpecEditor(validationErrors);
-            showDiagnostics({ textLines: ['Run table blocked: fix Param Table input errors.'] });
-            return;
-          }
-
-          const { sweeps, columns } = specFromState();
           const data = await safeInvoke('run_param_table', {
             equationsText: el('equations').value,
-            tableSpec: { sweeps, columns },
+            tableSpec: {
+              sweeps: [{ var: 'x', values: [1, 2, 3, 4] }],
+              columns: [{ name: 'x', expression: 'x' }, { name: 'y', expression: 'y' }],
+            },
             options: null,
           });
-          const lines = [
-            `Table status: ${data.status}`,
-            ...(data.message ? [data.message] : []),
-            ...(data.diagnostics || []).map((d) => `[${d.source}] L${d.span.line}: ${d.message}`),
-          ];
+          const lines = [`Table status: ${data.status}`, ...(data.message ? [data.message] : [])];
           showDiagnostics({ textLines: lines, diagnostics: data.diagnostics || [] });
           renderRows(data.rows || []);
         } catch (err) {
           showDiagnostics({ textLines: [`Run table failed: ${err}`] });
           renderRows([]);
         }
-      };
-
-      el('xCol').onchange = drawPlot;
-      el('yCol').onchange = drawPlot;
-
-      renderTableSpecEditor();
+      }
 
       async function openFromDisk() {
         try {
@@ -540,9 +365,7 @@ x - y = 2</textarea>
           showVariables({});
           renderRows([]);
         } catch (err) {
-          if (!String(err).includes('canceled')) {
-            showDiagnostics({ textLines: [`Open failed: ${err}`] });
-          }
+          if (!String(err).includes('canceled')) showDiagnostics({ textLines: [`Open failed: ${err}`] });
         }
       }
 
@@ -556,21 +379,34 @@ x - y = 2</textarea>
           currentFilePath = file.path || currentFilePath;
           showDiagnostics({ textLines: [`Saved: ${currentFilePath}`] });
         } catch (err) {
-          if (!String(err).includes('canceled')) {
-            showDiagnostics({ textLines: [`Save failed: ${err}`] });
-          }
+          if (!String(err).includes('canceled')) showDiagnostics({ textLines: [`Save failed: ${err}`] });
         }
       }
+
+      el('newBtn').onclick = clearWorkspace;
+      el('openBtn').onclick = () => { void openFromDisk(); };
+      el('saveBtn').onclick = () => { void saveToDisk(false); };
+      el('analyzeBtn').onclick = () => { void runAnalyze(); };
+      el('solveBtn').onclick = () => { void runSolve(); };
+      el('runTableBtn').onclick = () => { void runTable(); };
+      el('plotBtn').onclick = drawPlot;
+      el('updateBtn').onclick = () => showDiagnostics({ textLines: ['Update clicked.'] });
+      el('xCol').onchange = drawPlot;
+      el('yCol').onchange = drawPlot;
 
       if (listen) {
         listen('menu://file-new', clearWorkspace);
         listen('menu://file-open', () => { void openFromDisk(); });
         listen('menu://file-save', () => { void saveToDisk(false); });
         listen('menu://file-save-as', () => { void saveToDisk(true); });
-        listen('menu://calculate-solve', () => { void el('solveBtn').onclick(); });
-        listen('menu://calculate-analyze', () => { void el('analyzeBtn').onclick(); });
-        listen('menu://tables-run', () => { void el('runTableBtn').onclick(); });
+        listen('menu://calculate-solve', () => { void runSolve(); });
+        listen('menu://calculate-analyze', () => { void runAnalyze(); });
+        listen('menu://tables-run', () => { void runTable(); });
       }
+
+      showDiagnostics({ textLines: ['Ready.'] });
+      showVariables({});
+      renderRows([]);
     </script>
   </body>
 </html>
