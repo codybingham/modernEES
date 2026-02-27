@@ -68,6 +68,13 @@ struct SolveResponse {
     iterations: Option<usize>,
     final_norm: Option<f64>,
     message: Option<String>,
+    worst_residual: Option<UiResidual>,
+}
+
+#[derive(Debug, Serialize)]
+struct UiResidual {
+    residual: f64,
+    span: UiSpan,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +155,7 @@ fn solve_program(equations_text: String, options: Option<SolveOptionsInput>) -> 
                 iterations: None,
                 final_norm: None,
                 message: Some("Cannot solve due to parse errors".to_string()),
+                worst_residual: None,
             }
         }
     };
@@ -165,6 +173,7 @@ fn solve_program(equations_text: String, options: Option<SolveOptionsInput>) -> 
             iterations: None,
             final_norm: None,
             message: Some("Cannot solve due to unit diagnostics".to_string()),
+            worst_residual: None,
         };
     }
 
@@ -177,6 +186,7 @@ fn solve_program(equations_text: String, options: Option<SolveOptionsInput>) -> 
             iterations: Some(result.report.iterations),
             final_norm: Some(result.report.final_norm),
             message: None,
+            worst_residual: None,
         },
         Err(err) => SolveResponse {
             status: format!("solver_{:?}", err.report.status).to_lowercase(),
@@ -185,6 +195,19 @@ fn solve_program(equations_text: String, options: Option<SolveOptionsInput>) -> 
             iterations: Some(err.report.iterations),
             final_norm: Some(err.report.final_norm),
             message: Some(err.message),
+            worst_residual: err
+                .report
+                .worst_residuals
+                .first()
+                .map(|residual| UiResidual {
+                    residual: residual.residual,
+                    span: UiSpan {
+                        line: residual.span.start.line,
+                        column: residual.span.start.column,
+                        end_line: residual.span.end.line,
+                        end_column: residual.span.end.column,
+                    },
+                }),
         },
     }
 }
