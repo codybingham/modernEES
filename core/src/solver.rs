@@ -4,10 +4,11 @@ use std::fmt::{Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::parser::ast::{BinaryOp, Expr, ExprKind, Program, StatementKind, UnaryOp};
+use crate::parser::ast::{BinaryOp, CallArg, Expr, ExprKind, Program, StatementKind, UnaryOp};
 use crate::parser::diagnostic::Span;
 use crate::parser::parse_expression;
-use crate::props::{h, p_from_th, rho, s, t_from_ph, PropsError, PropsProvider};
+use crate::props::{Prop, PropsProvider, PropsQuery, StateVar};
+use crate::units::UnitRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConvergenceStatus {
@@ -107,6 +108,7 @@ pub fn solve_program_with_options_and_fixed(
 ) -> Result<SolveResult, SolveError> {
     let equations = extract_equations(program);
     let mut known = extract_known_constants(program)?;
+    let known_strings = extract_known_strings(program);
     for (name, value) in fixed {
         known.insert(name.clone(), *value);
     }
@@ -119,7 +121,7 @@ pub fn solve_program_with_options_and_fixed(
     }
 
     if unknowns.is_empty() {
-        let residuals = evaluate_residuals(&equations, &env, &unknowns, provider)
+        let residuals = evaluate_residuals(&equations, &env, &known_strings, &unknowns, provider)
             .map_err(|err| build_error(err, 0, &equations, &[]))?;
         let norm = l2_norm(&residuals);
         let report = build_report(
@@ -146,8 +148,8 @@ pub fn solve_program_with_options_and_fixed(
     }
 
     if equations.len() != unknowns.len() {
-        let residuals =
-            evaluate_residuals(&equations, &env, &unknowns, provider).unwrap_or_default();
+        let residuals = evaluate_residuals(&equations, &env, &known_strings, &unknowns, provider)
+            .unwrap_or_default();
         let norm = l2_norm(&residuals);
         return Err(SolveError {
             message: format!(
@@ -165,7 +167,7 @@ pub fn solve_program_with_options_and_fixed(
         });
     }
 
-    let mut residuals = evaluate_residuals(&equations, &env, &unknowns, provider)
+    let mut residuals = evaluate_residuals(&equations, &env, &known_strings, &unknowns, provider)
         .map_err(|err| build_error(err, 0, &equations, &[]))?;
     let mut norm = l2_norm(&residuals);
 
@@ -183,8 +185,16 @@ pub fn solve_program_with_options_and_fixed(
             });
         }
 
-        let jac = build_jacobian(&equations, &env, &unknowns, &residuals, provider, options)
-            .map_err(|err| build_error(err, iter, &equations, &residuals))?;
+        let jac = build_jacobian(
+            &equations,
+            &env,
+            &known_strings,
+            &unknowns,
+            &residuals,
+            provider,
+            options,
+        )
+        .map_err(|err| build_error(err, iter, &equations, &residuals))?;
         let rhs: Vec<f64> = residuals.iter().map(|v| -v).collect();
         let dx = solve_linear_system(jac, rhs).ok_or_else(|| SolveError {
             message: "Jacobian is singular; Newton step could not be computed".to_string(),
@@ -203,8 +213,9 @@ pub fn solve_program_with_options_and_fixed(
 
         while alpha >= options.min_step_factor {
             let trial_env = apply_step(&env, &unknowns, &dx, alpha);
-            let trial_residuals = evaluate_residuals(&equations, &trial_env, &unknowns, provider)
-                .map_err(|err| build_error(err, iter, &equations, &residuals))?;
+            let trial_residuals =
+                evaluate_residuals(&equations, &trial_env, &known_strings, &unknowns, provider)
+                    .map_err(|err| build_error(err, iter, &equations, &residuals))?;
             let trial_norm = l2_norm(&trial_residuals);
 
             if trial_norm < norm {
@@ -274,7 +285,7 @@ pub fn evaluate_expression_string(
             .join("; ")
     })?;
 
-    eval_expr(&expr, env, &[], provider)
+    eval_expr(&expr, env, &HashMap::new(), &[], provider)
 }
 
 fn build_error(
@@ -301,7 +312,9 @@ fn extract_equations(program: &Program) -> Vec<Equation> {
         .iter()
         .filter_map(|statement| {
             let StatementKind::Assignment { lhs, rhs } = &statement.kind;
-            if is_constant_assignment(lhs, rhs).is_some() {
+            if is_constant_assignment(lhs, rhs).is_some()
+                || is_string_assignment(lhs, rhs).is_some()
+            {
                 None
             } else {
                 Some(Equation {
@@ -339,6 +352,17 @@ fn extract_known_constants(program: &Program) -> Result<HashMap<String, f64>, So
     Ok(known)
 }
 
+fn extract_known_strings(program: &Program) -> HashMap<String, String> {
+    let mut known = HashMap::new();
+    for statement in &program.statements {
+        let StatementKind::Assignment { lhs, rhs } = &statement.kind;
+        if let Some((name, value)) = is_string_assignment(lhs, rhs) {
+            known.insert(name.to_string(), value.to_string());
+        }
+    }
+    known
+}
+
 fn is_constant_assignment<'a>(lhs: &'a Expr, rhs: &'a Expr) -> Option<(&'a str, f64)> {
     let ExprKind::Identifier(name) = &lhs.kind else {
         return None;
@@ -347,6 +371,17 @@ fn is_constant_assignment<'a>(lhs: &'a Expr, rhs: &'a Expr) -> Option<(&'a str, 
     match &rhs.kind {
         ExprKind::Number(value) => parse_number(value).ok().map(|v| (name.as_str(), v)),
         ExprKind::QuantityLiteral { value, .. } => Some((name.as_str(), *value)),
+        _ => None,
+    }
+}
+
+fn is_string_assignment<'a>(lhs: &'a Expr, rhs: &'a Expr) -> Option<(&'a str, &'a str)> {
+    let ExprKind::Identifier(name) = &lhs.kind else {
+        return None;
+    };
+
+    match &rhs.kind {
+        ExprKind::StringLiteral(value) => Some((name.as_str(), value.as_str())),
         _ => None,
     }
 }
@@ -387,7 +422,10 @@ fn collect_identifiers(expr: &Expr, out: &mut BTreeSet<String>) {
         }
         ExprKind::Call { args, .. } => {
             for arg in args {
-                collect_identifiers(arg, out);
+                match arg {
+                    CallArg::Positional(expr) => collect_identifiers(expr, out),
+                    CallArg::Keyword { value, .. } => collect_identifiers(value, out),
+                }
             }
         }
         ExprKind::Number(_) | ExprKind::QuantityLiteral { .. } | ExprKind::StringLiteral(_) => {}
@@ -397,14 +435,15 @@ fn collect_identifiers(expr: &Expr, out: &mut BTreeSet<String>) {
 fn evaluate_residuals(
     equations: &[Equation],
     env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
     unknowns: &[String],
     provider: &dyn PropsProvider,
 ) -> Result<Vec<f64>, String> {
     equations
         .iter()
         .map(|eq| {
-            let lhs = eval_expr(&eq.lhs, env, unknowns, provider)?;
-            let rhs = eval_expr(&eq.rhs, env, unknowns, provider)?;
+            let lhs = eval_expr(&eq.lhs, env, strings, unknowns, provider)?;
+            let rhs = eval_expr(&eq.rhs, env, strings, unknowns, provider)?;
             Ok(lhs - rhs)
         })
         .collect()
@@ -413,6 +452,7 @@ fn evaluate_residuals(
 fn eval_expr(
     expr: &Expr,
     env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
     unknowns: &[String],
     provider: &dyn PropsProvider,
 ) -> Result<f64, String> {
@@ -436,15 +476,15 @@ fn eval_expr(
             "String literal '{value}' cannot be used as numeric expression"
         )),
         ExprKind::Unary { op, expr } => {
-            let inner = eval_expr(expr, env, unknowns, provider)?;
+            let inner = eval_expr(expr, env, strings, unknowns, provider)?;
             match op {
                 UnaryOp::Plus => Ok(inner),
                 UnaryOp::Minus => Ok(-inner),
             }
         }
         ExprKind::Binary { op, left, right } => {
-            let l = eval_expr(left, env, unknowns, provider)?;
-            let r = eval_expr(right, env, unknowns, provider)?;
+            let l = eval_expr(left, env, strings, unknowns, provider)?;
+            let r = eval_expr(right, env, strings, unknowns, provider)?;
             match op {
                 BinaryOp::Add => Ok(l + r),
                 BinaryOp::Subtract => Ok(l - r),
@@ -453,40 +493,57 @@ fn eval_expr(
                 BinaryOp::Power => Ok(l.powf(r)),
             }
         }
-        ExprKind::Group(inner) => eval_expr(inner, env, unknowns, provider),
-        ExprKind::Call { callee, args } => eval_call(callee, args, env, unknowns, provider),
+        ExprKind::Group(inner) => eval_expr(inner, env, strings, unknowns, provider),
+        ExprKind::Call { callee, args } => {
+            eval_call(callee, args, env, strings, unknowns, provider)
+        }
     }
 }
 
 fn eval_call(
     callee: &str,
-    args: &[Expr],
+    args: &[CallArg],
     env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
     unknowns: &[String],
     provider: &dyn PropsProvider,
 ) -> Result<f64, String> {
     let lower = callee.to_ascii_lowercase();
     match lower.as_str() {
-        "sin" => eval_unary_math("sin", args, env, unknowns, provider, f64::sin),
-        "cos" => eval_unary_math("cos", args, env, unknowns, provider, f64::cos),
-        "tan" => eval_unary_math("tan", args, env, unknowns, provider, f64::tan),
-        "exp" => eval_unary_math("exp", args, env, unknowns, provider, f64::exp),
-        "ln" | "log" => eval_unary_math("ln/log", args, env, unknowns, provider, f64::ln),
-        "sqrt" => eval_unary_math("sqrt", args, env, unknowns, provider, f64::sqrt),
-        "abs" => eval_unary_math("abs", args, env, unknowns, provider, f64::abs),
-        "h" => eval_property_call("h", args, env, unknowns, provider, h),
-        "s" => eval_property_call("s", args, env, unknowns, provider, s),
-        "rho" => eval_property_call("rho", args, env, unknowns, provider, rho),
-        "t_from_ph" => eval_property_call("t_from_ph", args, env, unknowns, provider, t_from_ph),
-        "p_from_th" => eval_property_call("p_from_th", args, env, unknowns, provider, p_from_th),
+        "sin" => eval_unary_math("sin", args, env, strings, unknowns, provider, f64::sin),
+        "cos" => eval_unary_math("cos", args, env, strings, unknowns, provider, f64::cos),
+        "tan" => eval_unary_math("tan", args, env, strings, unknowns, provider, f64::tan),
+        "exp" => eval_unary_math("exp", args, env, strings, unknowns, provider, f64::exp),
+        "ln" | "log" => eval_unary_math("ln/log", args, env, strings, unknowns, provider, f64::ln),
+        "sqrt" => eval_unary_math("sqrt", args, env, strings, unknowns, provider, f64::sqrt),
+        "abs" => eval_unary_math("abs", args, env, strings, unknowns, provider, f64::abs),
+        "h" => eval_legacy_property_call("h", args, env, strings, unknowns, provider, Prop::H),
+        "s" => eval_legacy_property_call("s", args, env, strings, unknowns, provider, Prop::S),
+        "rho" => eval_legacy_property_call("rho", args, env, strings, unknowns, provider, Prop::D),
+        "t_from_ph" => {
+            eval_legacy_property_call("t_from_ph", args, env, strings, unknowns, provider, Prop::T)
+        }
+        "p_from_th" => {
+            eval_legacy_property_call("p_from_th", args, env, strings, unknowns, provider, Prop::P)
+        }
+        "enthalpy" => {
+            eval_ees_property_call(callee, args, env, strings, unknowns, provider, Prop::H)
+        }
+        "entropy" => {
+            eval_ees_property_call(callee, args, env, strings, unknowns, provider, Prop::S)
+        }
+        "density" => {
+            eval_ees_property_call(callee, args, env, strings, unknowns, provider, Prop::D)
+        }
         _ => Err(format!("Unsupported function '{callee}'")),
     }
 }
 
 fn eval_unary_math(
     name: &str,
-    args: &[Expr],
+    args: &[CallArg],
     env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
     unknowns: &[String],
     provider: &dyn PropsProvider,
     op: fn(f64) -> f64,
@@ -494,40 +551,157 @@ fn eval_unary_math(
     if args.len() != 1 {
         return Err(format!("Function '{name}' expects 1 argument"));
     }
-    let value = eval_expr(&args[0], env, unknowns, provider)?;
+    let CallArg::Positional(value_expr) = &args[0] else {
+        return Err(format!("Function '{name}' expects positional arguments"));
+    };
+    let value = eval_expr(value_expr, env, strings, unknowns, provider)?;
     Ok(op(value))
 }
 
-type PropertyFn = fn(&dyn PropsProvider, &str, f64, f64) -> Result<f64, PropsError>;
-
-fn eval_property_call(
+fn eval_legacy_property_call(
     name: &str,
-    args: &[Expr],
+    args: &[CallArg],
     env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
     unknowns: &[String],
     provider: &dyn PropsProvider,
-    f: PropertyFn,
+    out: Prop,
 ) -> Result<f64, String> {
     if args.len() != 3 {
         return Err(format!("Function '{name}' expects 3 arguments"));
     }
 
-    let fluid = match &args[0].kind {
-        ExprKind::StringLiteral(s) => s.as_str(),
-        _ => {
-            return Err(format!(
-                "Function '{name}' requires first argument as string literal"
-            ))
+    let fluid = eval_fluid_arg(name, &args[0], strings)?;
+    let a1 = eval_state_value(&args[1], env, strings, unknowns, provider)?;
+    let a2 = eval_state_value(&args[2], env, strings, unknowns, provider)?;
+
+    let query = match out {
+        Prop::H | Prop::S | Prop::D => {
+            PropsQuery::new(fluid, out, (StateVar::T, a1), (StateVar::P, a2))
         }
+        Prop::T => PropsQuery::new(fluid, out, (StateVar::P, a1), (StateVar::H, a2)),
+        Prop::P => PropsQuery::new(fluid, out, (StateVar::T, a1), (StateVar::H, a2)),
     };
-    let a1 = eval_expr(&args[1], env, unknowns, provider)?;
-    let a2 = eval_expr(&args[2], env, unknowns, provider)?;
-    f(provider, fluid, a1, a2).map_err(|err| format!("Property call '{name}' failed: {err}"))
+
+    provider
+        .query(&query)
+        .map_err(|err| format!("Property call '{name}' failed: {err}"))
+}
+
+fn eval_ees_property_call(
+    name: &str,
+    args: &[CallArg],
+    env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
+    unknowns: &[String],
+    provider: &dyn PropsProvider,
+    out: Prop,
+) -> Result<f64, String> {
+    if args.len() < 3 {
+        return Err(format!(
+            "Function '{name}' expects fluid plus two state keyword arguments"
+        ));
+    }
+
+    let fluid = eval_fluid_arg(name, &args[0], strings)?;
+    let mut states: Vec<(StateVar, f64)> = Vec::new();
+    for arg in &args[1..] {
+        let CallArg::Keyword {
+            name: key, value, ..
+        } = arg
+        else {
+            return Err(format!(
+                "Function '{name}' expects keyword state arguments after fluid"
+            ));
+        };
+        let var = parse_state_var(key)
+            .ok_or_else(|| format!("Function '{name}' received unknown state key '{key}'"))?;
+        if states.iter().any(|(existing, _)| *existing == var) {
+            return Err(format!(
+                "Function '{name}' received duplicate state key '{key}'"
+            ));
+        }
+        let value = eval_state_value_expr(value, env, strings, unknowns, provider)?;
+        states.push((var, value));
+    }
+
+    if states.len() != 2 {
+        return Err(format!(
+            "Function '{name}' requires exactly two state keywords"
+        ));
+    }
+
+    let query = PropsQuery::new(fluid, out, states[0], states[1]);
+    provider
+        .query(&query)
+        .map_err(|err| format!("Property call '{name}' failed: {err}"))
+}
+
+fn eval_fluid_arg<'a>(
+    name: &str,
+    arg: &'a CallArg,
+    strings: &'a HashMap<String, String>,
+) -> Result<&'a str, String> {
+    match arg {
+        CallArg::Positional(expr) => match &expr.kind {
+            ExprKind::StringLiteral(value) => Ok(value.as_str()),
+            ExprKind::Identifier(id) => strings
+                .get(id)
+                .map(String::as_str)
+                .ok_or_else(|| format!("Function '{name}' requires first argument fluid as string literal or string variable")),
+            _ => Err(format!("Function '{name}' requires first argument fluid as string literal or string variable")),
+        },
+        CallArg::Keyword { .. } => Err(format!("Function '{name}' requires first argument fluid as positional string")),
+    }
+}
+
+fn eval_state_value(
+    arg: &CallArg,
+    env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
+    unknowns: &[String],
+    provider: &dyn PropsProvider,
+) -> Result<f64, String> {
+    let CallArg::Positional(expr) = arg else {
+        return Err("Expected positional numeric argument".to_string());
+    };
+    eval_state_value_expr(expr, env, strings, unknowns, provider)
+}
+
+fn eval_state_value_expr(
+    expr: &Expr,
+    env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
+    unknowns: &[String],
+    provider: &dyn PropsProvider,
+) -> Result<f64, String> {
+    if let ExprKind::QuantityLiteral { value, unit, .. } = &expr.kind {
+        let registry = UnitRegistry::default();
+        let parsed = registry
+            .parse_unit_string(unit)
+            .map_err(|err| format!("Invalid unit '{unit}' in property argument: {err}"))?;
+        return Ok(*value * parsed.scale);
+    }
+
+    // Plain numeric expressions are treated as already in base SI units.
+    eval_expr(expr, env, strings, unknowns, provider)
+}
+
+fn parse_state_var(key: &str) -> Option<StateVar> {
+    match key.to_ascii_lowercase().as_str() {
+        "t" => Some(StateVar::T),
+        "p" => Some(StateVar::P),
+        "h" => Some(StateVar::H),
+        "s" => Some(StateVar::S),
+        "d" | "rho" => Some(StateVar::D),
+        _ => None,
+    }
 }
 
 fn build_jacobian(
     equations: &[Equation],
     env: &HashMap<String, f64>,
+    strings: &HashMap<String, String>,
     unknowns: &[String],
     baseline_residuals: &[f64],
     provider: &dyn PropsProvider,
@@ -543,7 +717,8 @@ fn build_jacobian(
         let h = options.fd_epsilon * base_value.abs().max(1.0);
         let mut perturbed = env.clone();
         perturbed.insert(name.clone(), base_value + h);
-        let perturbed_residuals = evaluate_residuals(equations, &perturbed, unknowns, provider)?;
+        let perturbed_residuals =
+            evaluate_residuals(equations, &perturbed, strings, unknowns, provider)?;
 
         for (i, row) in jac.iter_mut().enumerate() {
             row[j] = (perturbed_residuals[i] - baseline_residuals[i]) / h;

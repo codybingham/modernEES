@@ -43,9 +43,19 @@ pub enum ExprKind {
     },
     Call {
         callee: String,
-        args: Vec<Expr>,
+        args: Vec<CallArg>,
     },
     Group(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallArg {
+    Positional(Expr),
+    Keyword {
+        name: String,
+        value: Expr,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

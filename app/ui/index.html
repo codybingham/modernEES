@@ -212,7 +212,7 @@ x - y = 2</textarea>
       <span class="status-item">US</span>
       <span class="status-item">Line #: Off</span>
       <span class="status-item">Wrap: On</span>
-      <span class="status-item">Ready</span>
+      <span class="status-item" id="propsStatus">Props: checking…</span>
     </div>
 
     <script>
@@ -230,6 +230,22 @@ x - y = 2</textarea>
       };
 
       const RESERVED_WORDS = new Set(['and', 'or', 'not']);
+
+
+      async function refreshPropsStatus() {
+        if (!invoke) {
+          el('propsStatus').textContent = 'Props: unavailable (invoke missing)';
+          return;
+        }
+        try {
+          const status = await invoke('props_status');
+          el('propsStatus').textContent = status.available
+            ? 'Props: available'
+            : `Props: unavailable${status.message ? ` (${status.message})` : ''}`;
+        } catch (err) {
+          el('propsStatus').textContent = `Props: unavailable (${err})`;
+        }
+      }
 
       function lineColumnLabel(span) {
         if (!span || !span.line || !span.column) return 'L?:?';
@@ -277,6 +293,7 @@ x - y = 2</textarea>
         showVariables({});
         renderRows([]);
         refreshProgramList();
+      refreshPropsStatus();
         renderEditorHilite();
         currentFilePath = null;
       }

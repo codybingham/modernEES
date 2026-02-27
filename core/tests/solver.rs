@@ -92,3 +92,64 @@ x = 2
             || err.message.contains("Conflicting constant assignments")
     );
 }
+
+use modern_ees_core::props::{Prop, PropsQuery, StateVar};
+
+#[test]
+fn solves_with_enthalpy_keyword_arguments_unordered() {
+    let provider = MockPropsProvider::new();
+    provider.insert(
+        PropsQuery::new(
+            "Water",
+            Prop::H,
+            (StateVar::T, 300.0),
+            (StateVar::P, 101_325.0),
+        ),
+        1234.5,
+    );
+
+    let program = parse("target = 1234.5\nEnthalpy(\"Water\", P=101325, T=300) = target\n");
+    let result = solve_program(&program, &provider).expect("solve should succeed");
+    assert_eq!(result.report.status, ConvergenceStatus::Converged);
+}
+
+#[test]
+fn ees_keyword_arguments_report_duplicate_missing_and_unknown() {
+    let provider = MockPropsProvider::new();
+
+    let duplicate = parse("x = Enthalpy(\"Water\", T=300, T=310)\n");
+    let err = solve_program(&duplicate, &provider).expect_err("duplicate should fail");
+    assert!(err.message.contains("duplicate state key"));
+
+    let missing = parse("x = Entropy(\"Water\", T=300)\n");
+    let err = solve_program(&missing, &provider).expect_err("missing should fail");
+    assert!(
+        err.message
+            .contains("expects fluid plus two state keyword arguments")
+            || err.message.contains("exactly two state keywords")
+    );
+
+    let unknown = parse("x = Density(\"Water\", X=1, P=101325)\n");
+    let err = solve_program(&unknown, &provider).expect_err("unknown key should fail");
+    assert!(err.message.contains("unknown state key"));
+}
+
+#[test]
+fn ees_keyword_argument_quantity_literal_converts_to_si() {
+    let provider = MockPropsProvider::new();
+    provider.insert(
+        PropsQuery::new(
+            "Water",
+            Prop::D,
+            (StateVar::T, 300.0),
+            (StateVar::P, 101_325.0),
+        ),
+        997.0,
+    );
+
+    let program = parse(
+        "rho_target = 997\nDensity(\"Water\", T=300 [K], P=101325 [kg/m/s^2]) = rho_target\n",
+    );
+    let result = solve_program(&program, &provider).expect("solve should succeed");
+    assert_eq!(result.report.status, ConvergenceStatus::Converged);
+}

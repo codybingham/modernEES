@@ -2038,6 +2038,7 @@ name = "modern_ees_app"
 version = "0.1.0"
 dependencies = [
  "modern_ees_core",
+ "modern_ees_props_coolprop",
  "rfd",
  "serde",
  "serde_json",

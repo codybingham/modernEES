@@ -1,4 +1,6 @@
-use crate::parser::ast::{BinaryOp, Expr, ExprKind, Program, Statement, StatementKind, UnaryOp};
+use crate::parser::ast::{
+    BinaryOp, CallArg, Expr, ExprKind, Program, Statement, StatementKind, UnaryOp,
+};
 use crate::parser::diagnostic::{Diagnostic, Span};
 use crate::parser::lexer::{lex, Token, TokenKind};
 
@@ -274,8 +276,11 @@ impl Parser {
                     let mut args = Vec::new();
                     if !self.check(|k| matches!(k, TokenKind::RParen)) {
                         loop {
-                            args.push(self.parse_expression()?);
+                            args.push(self.parse_call_argument()?);
                             if !self.matches(|k| matches!(k, TokenKind::Comma)) {
+                                break;
+                            }
+                            if self.check(|k| matches!(k, TokenKind::RParen)) {
                                 break;
                             }
                         }
@@ -347,6 +352,43 @@ impl Parser {
         }
     }
 
+    fn parse_call_argument(&mut self) -> Option<CallArg> {
+        if self.check(|k| matches!(k, TokenKind::Identifier(_)))
+            && self.check_next(|k| matches!(k, TokenKind::Equal))
+        {
+            let name_token = self.peek().clone();
+            let name = match &name_token.kind {
+                TokenKind::Identifier(name) => name.clone(),
+                _ => unreachable!(),
+            };
+            self.advance();
+            self.advance();
+            let value = self.parse_expression()?;
+            let span = Span {
+                start: name_token.span.start,
+                end: value.span.end,
+            };
+            return Some(CallArg::Keyword { name, value, span });
+        }
+
+        let expr = self.parse_expression()?;
+        if self.check(|k| {
+            matches!(
+                k,
+                TokenKind::Identifier(_) | TokenKind::Number(_) | TokenKind::StringLiteral(_)
+            )
+        }) {
+            let span = self.peek().span;
+            self.diagnostics.push(Diagnostic::new(
+                "Expected ',' or ')' after argument; did you mean to use '=' for a keyword argument?",
+                span,
+            ));
+            return None;
+        }
+
+        Some(CallArg::Positional(expr))
+    }
+
     fn synchronize_line(&mut self) {
         while !self.is_at_end() {
             if self.matches(|k| matches!(k, TokenKind::Newline)) {
@@ -367,6 +409,11 @@ impl Parser {
 
     fn check(&self, predicate: impl Fn(&TokenKind) -> bool) -> bool {
         predicate(&self.peek().kind)
+    }
+
+    fn check_next(&self, predicate: impl Fn(&TokenKind) -> bool) -> bool {
+        let idx = (self.current + 1).min(self.tokens.len().saturating_sub(1));
+        predicate(&self.tokens[idx].kind)
     }
 
     fn advance(&mut self) {
