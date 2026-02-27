@@ -6,19 +6,21 @@
   "build": {
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420"
+    "frontendDist": "./ui"
   },
   "app": {
     "windows": [
       {
         "title": "modernEES",
-        "width": 1024,
-        "height": 768
+        "width": 1200,
+        "height": 850
       }
     ]
   },
   "bundle": {
-    "active": false
+    "active": false,
+    "icon": [
+      "icons/icon.svg"
+    ]
   }
 }

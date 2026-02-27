@@ -21,3 +21,15 @@ Or directly with Cargo:
 - `cargo fmt --all`
 - `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo test --all-targets --all-features`
+
+## Tauri app (Task H)
+
+Run the desktop app:
+
+- `cargo run -p modern_ees_app`
+
+If you have the Tauri CLI installed, you can also run:
+
+- `cargo tauri dev --manifest-path app/Cargo.toml`
+
+The app currently uses the core solver + mock properties backend, so CoolProp is not required for UI usage.
