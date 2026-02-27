@@ -70,6 +70,12 @@
         background: #d4d0c8;
       }
       .editor-wrap { display: flex; flex-direction: column; min-height: 0; }
+      .editor-stack {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        border-top: 1px solid #7f7f7f;
+      }
       textarea, input, select {
         width: 100%;
         background: #fff;
@@ -77,13 +83,36 @@
         padding: 4px;
       }
       #equations {
-        flex: 1;
+        position: absolute;
+        inset: 0;
         resize: none;
         border: none;
-        border-top: 1px solid #7f7f7f;
+        padding: 6px;
         font-family: "Courier New", monospace;
         font-size: 13px;
         line-height: 1.35;
+        background: transparent;
+        z-index: 2;
+      }
+      #equationOverlay {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        overflow: hidden;
+        padding: 6px;
+        font-family: "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.35;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: transparent;
+        pointer-events: none;
+        z-index: 3;
+      }
+      #equationOverlay mark {
+        background: #ffeb3b;
+        color: transparent;
+        padding: 0;
       }
       .bottom-tools {
         display: grid;
@@ -137,8 +166,11 @@
       <div class="left-pane">
         <section class="panel editor-wrap">
           <div class="header">Equations Window</div>
-          <textarea id="equations">x + y = 10
+          <div class="editor-stack">
+            <pre id="equationOverlay" aria-hidden="true"></pre>
+            <textarea id="equations">x + y = 10
 x - y = 2</textarea>
+          </div>
         </section>
 
         <section class="panel">
@@ -189,6 +221,15 @@ x - y = 2</textarea>
       const el = (id) => document.getElementById(id);
       let latestRows = [];
       let currentFilePath = null;
+      let hiliteEnabled = false;
+      let lastAnalyze = null;
+      const VIEW_TOGGLES = {
+        toolbar: true,
+        statusbar: true,
+        rightPane: true,
+      };
+
+      const RESERVED_WORDS = new Set(['and', 'or', 'not']);
 
       function lineColumnLabel(span) {
         if (!span || !span.line || !span.column) return 'L?:?';
@@ -235,7 +276,82 @@ x - y = 2</textarea>
         showDiagnostics();
         showVariables({});
         renderRows([]);
+        refreshProgramList();
+        renderEditorHilite();
         currentFilePath = null;
+      }
+
+      function escapeHtml(text) {
+        return text
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;');
+      }
+
+      function collectIdentifierCounts(text) {
+        const counts = new Map();
+        const regex = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+          const word = match[0];
+          if (RESERVED_WORDS.has(word.toLowerCase())) continue;
+          counts.set(word, (counts.get(word) || 0) + 1);
+        }
+        return counts;
+      }
+
+      function buildOverlayHtml(text, highlightSet) {
+        const regex = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
+        let cursor = 0;
+        let out = '';
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+          out += escapeHtml(text.slice(cursor, match.index));
+          const token = match[0];
+          const escaped = escapeHtml(token);
+          out += highlightSet.has(token) ? `<mark>${escaped}</mark>` : escaped;
+          cursor = match.index + token.length;
+        }
+        out += escapeHtml(text.slice(cursor));
+        return out;
+      }
+
+      function syncOverlayScroll() {
+        const editor = el('equations');
+        const overlay = el('equationOverlay');
+        overlay.scrollTop = editor.scrollTop;
+        overlay.scrollLeft = editor.scrollLeft;
+      }
+
+      function renderEditorHilite() {
+        const editor = el('equations');
+        const overlay = el('equationOverlay');
+        const counts = collectIdentifierCounts(editor.value);
+        const onceOnly = new Set([...counts.entries()].filter(([, count]) => count === 1).map(([name]) => name));
+        overlay.innerHTML = (hiliteEnabled && onceOnly.size)
+          ? buildOverlayHtml(editor.value, onceOnly)
+          : '';
+        editor.style.color = hiliteEnabled ? '#111' : '#111';
+        syncOverlayScroll();
+      }
+
+      function refreshProgramList(identifiers = null) {
+        const list = el('programList');
+        const counts = collectIdentifierCounts(el('equations').value);
+        const names = (identifiers && identifiers.length)
+          ? [...identifiers]
+          : [...counts.keys()].sort((a, b) => a.localeCompare(b));
+        list.innerHTML = '';
+        if (!names.length) {
+          list.innerHTML = '<li>Main Program</li>';
+          return;
+        }
+        names.forEach((name) => {
+          const item = document.createElement('li');
+          const count = counts.get(name) || 0;
+          item.textContent = `${name} (${count})${count === 1 ? ' • used once' : ''}`;
+          list.appendChild(item);
+        });
       }
 
       function drawPlot() {
@@ -295,10 +411,17 @@ x - y = 2</textarea>
       async function runAnalyze() {
         try {
           const data = await safeInvoke('parse_and_analyze', { equationsText: el('equations').value });
+          lastAnalyze = data;
           const summary = data.identifiers?.length ? `Identifiers: ${data.identifiers.join(', ')}` : '';
           showDiagnostics({ summary, diagnostics: data.diagnostics || [] });
+          refreshProgramList(data.identifiers || []);
+          renderEditorHilite();
+          return data;
         } catch (err) {
           showDiagnostics({ textLines: [`Analyze failed: ${err}`] });
+          refreshProgramList();
+          renderEditorHilite();
+          return null;
         }
       }
 
@@ -350,6 +473,7 @@ x - y = 2</textarea>
           const lines = [`Table status: ${data.status}`, ...(data.message ? [data.message] : [])];
           showDiagnostics({ textLines: lines, diagnostics: data.diagnostics || [] });
           renderRows(data.rows || []);
+          refreshProgramList(lastAnalyze?.identifiers || []);
         } catch (err) {
           showDiagnostics({ textLines: [`Run table failed: ${err}`] });
           renderRows([]);
@@ -364,6 +488,8 @@ x - y = 2</textarea>
           showDiagnostics({ textLines: [`Opened: ${currentFilePath}`] });
           showVariables({});
           renderRows([]);
+          refreshProgramList();
+          renderEditorHilite();
         } catch (err) {
           if (!String(err).includes('canceled')) showDiagnostics({ textLines: [`Open failed: ${err}`] });
         }
@@ -390,9 +516,37 @@ x - y = 2</textarea>
       el('solveBtn').onclick = () => { void runSolve(); };
       el('runTableBtn').onclick = () => { void runTable(); };
       el('plotBtn').onclick = drawPlot;
-      el('updateBtn').onclick = () => showDiagnostics({ textLines: ['Update clicked.'] });
+      el('updateBtn').onclick = () => { void runAnalyze(); };
+      el('hiliteOnce').onchange = (event) => {
+        hiliteEnabled = Boolean(event.target.checked);
+        renderEditorHilite();
+      };
+      el('equations').oninput = () => {
+        refreshProgramList(lastAnalyze?.identifiers || []);
+        renderEditorHilite();
+      };
+      el('equations').onscroll = syncOverlayScroll;
       el('xCol').onchange = drawPlot;
       el('yCol').onchange = drawPlot;
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'F5') {
+          event.preventDefault();
+          void runAnalyze();
+        } else if (event.ctrlKey && event.key === 'Enter') {
+          event.preventDefault();
+          void runSolve();
+        } else if (event.ctrlKey && event.key.toLowerCase() === 'r') {
+          event.preventDefault();
+          void runTable();
+        }
+      });
+
+      function applyViewToggles() {
+        document.querySelector('.toolbar').style.display = VIEW_TOGGLES.toolbar ? 'flex' : 'none';
+        document.querySelector('.statusbar').style.display = VIEW_TOGGLES.statusbar ? 'flex' : 'none';
+        document.querySelector('.right-pane').style.display = VIEW_TOGGLES.rightPane ? 'flex' : 'none';
+      }
 
       if (listen) {
         listen('menu://file-new', clearWorkspace);
@@ -402,11 +556,26 @@ x - y = 2</textarea>
         listen('menu://calculate-solve', () => { void runSolve(); });
         listen('menu://calculate-analyze', () => { void runAnalyze(); });
         listen('menu://tables-run', () => { void runTable(); });
+        listen('menu://window-toggle-toolbar', () => {
+          VIEW_TOGGLES.toolbar = !VIEW_TOGGLES.toolbar;
+          applyViewToggles();
+        });
+        listen('menu://window-toggle-statusbar', () => {
+          VIEW_TOGGLES.statusbar = !VIEW_TOGGLES.statusbar;
+          applyViewToggles();
+        });
+        listen('menu://window-toggle-right-pane', () => {
+          VIEW_TOGGLES.rightPane = !VIEW_TOGGLES.rightPane;
+          applyViewToggles();
+        });
       }
 
       showDiagnostics({ textLines: ['Ready.'] });
       showVariables({});
       renderRows([]);
+      refreshProgramList();
+      applyViewToggles();
+      renderEditorHilite();
     </script>
   </body>
 </html>
