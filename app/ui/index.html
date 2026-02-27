@@ -13,6 +13,20 @@
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       #equations { min-height: 220px; }
       #diagnostics { min-height: 120px; }
+      .diagnostics-list { display: flex; flex-direction: column; gap: 6px; }
+      .diag-item {
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 6px;
+        text-align: left;
+        width: 100%;
+        background: #f9fafb;
+        cursor: pointer;
+      }
+      .diag-item:hover { background: #eff6ff; border-color: #93c5fd; }
+      .diag-meta { font-size: 11px; color: #374151; }
+      .diag-message { margin-top: 2px; font-size: 12px; white-space: pre-wrap; }
+      .diag-summary { margin-bottom: 8px; font-size: 12px; color: #111827; }
       #resultsGrid { max-height: 220px; overflow: auto; }
       table { border-collapse: collapse; width: 100%; }
       th, td { border: 1px solid #ddd; padding: 4px; font-size: 12px; }
@@ -67,9 +81,68 @@ x - y = 2</textarea>
       const el = (id) => document.getElementById(id);
       let latestRows = [];
       let currentFilePath = null;
+      let currentSummary = '';
 
-      function showDiagnostics(lines) {
-        el('diagnostics').textContent = lines.length ? lines.join('\n') : 'No diagnostics';
+      function lineColumnLabel(span) {
+        if (!span || !span.line || !span.column) return 'L?:?';
+        return `L${span.line}:${span.column}`;
+      }
+
+      function toOffset(lines, line, column) {
+        const lineIndex = Math.max(0, Math.min((line || 1) - 1, lines.length - 1));
+        const lineStart = lines.slice(0, lineIndex).reduce((sum, entry) => sum + entry.length + 1, 0);
+        const colIndex = Math.max(0, Math.min((column || 1) - 1, (lines[lineIndex] || '').length));
+        return lineStart + colIndex;
+      }
+
+      function focusEditorSpan(span) {
+        const editor = el('equations');
+        const lines = editor.value.split('\n');
+        const start = toOffset(lines, span?.line, span?.column);
+        const hasRange = span && Number.isFinite(span.end_line) && Number.isFinite(span.end_column)
+          && (span.end_line > span.line || (span.end_line === span.line && span.end_column > span.column));
+        const end = hasRange ? toOffset(lines, span.end_line, span.end_column) : start;
+
+        editor.focus();
+        editor.setSelectionRange(start, end);
+      }
+
+      function showDiagnostics({ summary = '', diagnostics = [], textLines = [] } = {}) {
+        currentSummary = summary || '';
+        const panel = el('diagnostics');
+        panel.innerHTML = '';
+
+        if (currentSummary) {
+          const summaryEl = document.createElement('div');
+          summaryEl.className = 'diag-summary';
+          summaryEl.textContent = currentSummary;
+          panel.appendChild(summaryEl);
+        }
+
+        if (diagnostics.length) {
+          const list = document.createElement('div');
+          list.className = 'diagnostics-list';
+          diagnostics.forEach((diag) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'diag-item';
+            const sev = (diag.severity || diag.source || 'info').toUpperCase();
+            item.innerHTML = `<div class="diag-meta">${sev} • ${lineColumnLabel(diag.span)}</div><div class="diag-message">${diag.message}</div>`;
+            if (diag.span) {
+              item.onclick = () => focusEditorSpan(diag.span);
+            } else {
+              item.disabled = true;
+            }
+            list.appendChild(item);
+          });
+          panel.appendChild(list);
+        } else if (textLines.length) {
+          const plain = document.createElement('div');
+          plain.textContent = textLines.join('\n');
+          panel.appendChild(plain);
+        } else if (!currentSummary) {
+          panel.textContent = 'No diagnostics';
+        }
       }
 
       function showVariables(vars) {
@@ -81,7 +154,7 @@ x - y = 2</textarea>
 
       function clearWorkspace() {
         el('equations').value = '';
-        showDiagnostics([]);
+        showDiagnostics();
         showVariables({});
         renderRows([]);
         currentFilePath = null;
@@ -161,27 +234,52 @@ x - y = 2</textarea>
       el('analyzeBtn').onclick = async () => {
         try {
           const data = await safeInvoke('parse_and_analyze', { equationsText: el('equations').value });
-          const lines = data.diagnostics.map((d) => `[${d.source}] L${d.span.line}: ${d.message}`);
-          if (data.identifiers?.length) lines.push(`Identifiers: ${data.identifiers.join(', ')}`);
-          showDiagnostics(lines);
+          const summary = data.identifiers?.length ? `Identifiers: ${data.identifiers.join(', ')}` : '';
+          showDiagnostics({ summary, diagnostics: data.diagnostics || [] });
         } catch (err) {
-          showDiagnostics([`Analyze failed: ${err}`]);
+          showDiagnostics({ textLines: [`Analyze failed: ${err}`] });
         }
       };
+
+      function findEquationSnippetFromSpan(span) {
+        if (!span?.line) return '';
+        const lines = el('equations').value.split('\n');
+        return (lines[span.line - 1] || '').trim();
+      }
 
       el('solveBtn').onclick = async () => {
         try {
           const data = await safeInvoke('solve_program', { equationsText: el('equations').value, options: null });
-          const lines = [];
-          if (data.message) lines.push(data.message);
-          lines.push(`Status: ${data.status}`);
-          if (data.iterations != null) lines.push(`Iterations: ${data.iterations}`);
-          if (data.final_norm != null) lines.push(`Final norm: ${data.final_norm}`);
-          lines.push(...(data.diagnostics || []).map((d) => `[${d.source}] L${d.span.line}: ${d.message}`));
-          showDiagnostics(lines);
+          const summaryParts = [];
+          if (data.status === 'ok') {
+            summaryParts.push('Solve succeeded.');
+          } else {
+            summaryParts.push(`Solve failed (${data.status}).`);
+            if (data.message) summaryParts.push(data.message);
+            if (data.worst_residual?.span?.line) {
+              const eq = findEquationSnippetFromSpan(data.worst_residual.span);
+              if (eq) {
+                summaryParts.push(`Max residual at line ${data.worst_residual.span.line}: ${eq}`);
+              }
+            }
+          }
+          if (data.iterations != null) summaryParts.push(`Iterations: ${data.iterations}`);
+          if (data.final_norm != null) summaryParts.push(`Final norm: ${data.final_norm}`);
+
+          const diagnostics = [...(data.diagnostics || [])];
+          if (data.worst_residual?.span) {
+            diagnostics.unshift({
+              severity: 'error',
+              source: 'solver',
+              message: `Max residual ${data.worst_residual.residual}`,
+              span: data.worst_residual.span,
+            });
+          }
+
+          showDiagnostics({ summary: summaryParts.join(' '), diagnostics });
           showVariables(data.variables || {});
         } catch (err) {
-          showDiagnostics([`Solve failed: ${err}`]);
+          showDiagnostics({ textLines: [`Solve failed: ${err}`] });
         }
       };
 
@@ -199,10 +297,10 @@ x - y = 2</textarea>
             ...(data.message ? [data.message] : []),
             ...(data.diagnostics || []).map((d) => `[${d.source}] L${d.span.line}: ${d.message}`),
           ];
-          showDiagnostics(lines);
+          showDiagnostics({ textLines: lines, diagnostics: data.diagnostics || [] });
           renderRows(data.rows || []);
         } catch (err) {
-          showDiagnostics([`Run table failed: ${err}`]);
+          showDiagnostics({ textLines: [`Run table failed: ${err}`] });
           renderRows([]);
         }
       };
@@ -215,12 +313,12 @@ x - y = 2</textarea>
           const file = await safeInvoke('open_equations_file');
           el('equations').value = file.contents || '';
           currentFilePath = file.path || null;
-          showDiagnostics([`Opened: ${currentFilePath}`]);
+          showDiagnostics({ textLines: [`Opened: ${currentFilePath}`] });
           showVariables({});
           renderRows([]);
         } catch (err) {
           if (!String(err).includes('canceled')) {
-            showDiagnostics([`Open failed: ${err}`]);
+            showDiagnostics({ textLines: [`Open failed: ${err}`] });
           }
         }
       }
@@ -233,10 +331,10 @@ x - y = 2</textarea>
             saveAs,
           });
           currentFilePath = file.path || currentFilePath;
-          showDiagnostics([`Saved: ${currentFilePath}`]);
+          showDiagnostics({ textLines: [`Saved: ${currentFilePath}`] });
         } catch (err) {
           if (!String(err).includes('canceled')) {
-            showDiagnostics([`Save failed: ${err}`]);
+            showDiagnostics({ textLines: [`Save failed: ${err}`] });
           }
         }
       }
