@@ -12,7 +12,7 @@ use modern_ees_core::{
 };
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageLevel};
 use serde::{Deserialize, Serialize};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Deserialize)]
@@ -364,6 +364,9 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         "calc_solve" => emit_menu_event(app, "menu://calculate-solve"),
         "calc_analyze" => emit_menu_event(app, "menu://calculate-analyze"),
         "tables_run" => emit_menu_event(app, "menu://tables-run"),
+        "window_toggle_toolbar" => emit_menu_event(app, "menu://window-toggle-toolbar"),
+        "window_toggle_statusbar" => emit_menu_event(app, "menu://window-toggle-statusbar"),
+        "window_toggle_right_pane" => emit_menu_event(app, "menu://window-toggle-right-pane"),
         "help_about" => {
             MessageDialog::new()
                 .set_level(MessageLevel::Info)
@@ -469,13 +472,32 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         app,
         "Window",
         true,
-        &[&MenuItem::with_id(
-            app,
-            "window_placeholder",
-            "Cascade",
-            false,
-            None::<&str>,
-        )?],
+        &[
+            &CheckMenuItem::with_id(
+                app,
+                "window_toggle_toolbar",
+                "Toolbar visible",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "window_toggle_statusbar",
+                "Status bar visible",
+                true,
+                true,
+                None::<&str>,
+            )?,
+            &CheckMenuItem::with_id(
+                app,
+                "window_toggle_right_pane",
+                "Right pane visible",
+                true,
+                true,
+                None::<&str>,
+            )?,
+        ],
     )?;
     let examples_menu = Submenu::with_items(
         app,
